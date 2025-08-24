@@ -535,6 +535,10 @@ def configure(env: "SConsEnvironment"):
     if env["use_static_cpp"]:
         env.Append(LINKFLAGS=["-static-libgcc", "-static-libstdc++"])
         if env["use_llvm"] and platform.system() != "FreeBSD":
+            # Arch Linux does not include the static libatomic.a in the GCC package by default,
+            # unlike some other distributions (e.g., Ubuntu).
+            # Using -latomic ensures the linker can find the shared version of the library,
+            # resolving build issues when building the Mono module with static C++ linking.
             env["LINKCOM"] = env["LINKCOM"] + " -latomic"
     else:
         if env["use_llvm"] and platform.system() != "FreeBSD":
