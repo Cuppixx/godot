@@ -364,13 +364,6 @@ void ShaderTextEditor::_load_theme_settings() {
 	// Colorize preprocessor include strings.
 	const Color string_color = EDITOR_GET("text_editor/theme/highlighting/string_color");
 	syntax_highlighter->add_color_region("\"", "\"", string_color, false);
-
-	if (warnings_panel) {
-		// Warnings panel.
-		warnings_panel->add_theme_font_override("normal_font", EditorNode::get_singleton()->get_editor_theme()->get_font(SNAME("main"), EditorStringName(EditorFonts)));
-		warnings_panel->add_theme_font_size_override("normal_font_size", EditorNode::get_singleton()->get_editor_theme()->get_font_size(SNAME("main_size"), EditorStringName(EditorFonts)));
-	}
-
 	syntax_highlighter->set_uint_suffix_enabled(true);
 }
 
@@ -787,7 +780,7 @@ void TextShaderEditor::_menu_option(int p_option) {
 		} break;
 	}
 	if (p_option != SEARCH_FIND && p_option != SEARCH_REPLACE && p_option != SEARCH_GOTO_LINE) {
-		callable_mp((Control *)code_editor->get_text_editor(), &Control::grab_focus).call_deferred();
+		callable_mp((Control *)code_editor->get_text_editor(), &Control::grab_focus).call_deferred(false);
 	}
 }
 
@@ -1028,6 +1021,14 @@ void TextShaderEditor::trim_trailing_whitespace() {
 
 void TextShaderEditor::trim_final_newlines() {
 	code_editor->trim_final_newlines();
+}
+
+void TextShaderEditor::set_toggle_list_control(Control *p_toggle_list_control) {
+	code_editor->set_toggle_list_control(p_toggle_list_control);
+}
+
+void TextShaderEditor::update_toggle_files_button() {
+	code_editor->update_toggle_files_button();
 }
 
 void TextShaderEditor::validate_script() {

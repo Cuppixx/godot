@@ -104,7 +104,7 @@ public:
 
 		Type type = TYPE_NONE;
 		int32_t adjacent_command_list_index = -1;
-		RDD::MemoryBarrier memory_barrier;
+		RDD::MemoryAccessBarrier memory_barrier;
 		int32_t normalization_barrier_index = -1;
 		int normalization_barrier_count = 0;
 		int32_t transition_barrier_index = -1;
@@ -489,6 +489,7 @@ private:
 		RDD::ShaderID shader;
 		uint32_t first_set_index = 0;
 		uint32_t set_count = 0;
+		uint32_t dynamic_offsets_mask = 0u;
 
 		_FORCE_INLINE_ RDD::UniformSetID *uniform_set_ids() {
 			return reinterpret_cast<RDD::UniformSetID *>(&this[1]);
@@ -620,6 +621,7 @@ private:
 		RDD::ShaderID shader;
 		uint32_t first_set_index = 0;
 		uint32_t set_count = 0;
+		uint32_t dynamic_offsets_mask = 0u;
 
 		_FORCE_INLINE_ RDD::UniformSetID *uniform_set_ids() {
 			return reinterpret_cast<RDD::UniformSetID *>(&this[1]);
@@ -663,7 +665,7 @@ private:
 	struct BarrierGroup {
 		BitField<RDD::PipelineStageBits> src_stages = {};
 		BitField<RDD::PipelineStageBits> dst_stages = {};
-		RDD::MemoryBarrier memory_barrier;
+		RDD::MemoryAccessBarrier memory_barrier;
 		LocalVector<RDD::TextureBarrier> normalization_barriers;
 		LocalVector<RDD::TextureBarrier> transition_barriers;
 #if USE_BUFFER_BARRIERS

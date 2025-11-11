@@ -46,6 +46,7 @@ class ConfirmationDialog;
 class Control;
 class FileDialog;
 class HBoxContainer;
+class ImageTexture;
 class MenuBar;
 class MenuButton;
 class OptionButton;
@@ -54,6 +55,7 @@ class PanelContainer;
 class RichTextLabel;
 class SubViewport;
 class TextureProgressBar;
+class Timer;
 class Translation;
 class Tree;
 class VBoxContainer;
@@ -63,7 +65,6 @@ class Window;
 class AudioStreamImportSettingsDialog;
 class AudioStreamPreviewGenerator;
 class BackgroundProgress;
-class DependencyEditor;
 class DependencyErrorDialog;
 class DockSplitContainer;
 class DynamicFontImportSettingsDialog;
@@ -155,6 +156,7 @@ public:
 		SCENE_REDO,
 		SCENE_RELOAD_SAVED_SCENE,
 		SCENE_CLOSE,
+		SCENE_CLOSE_ALL,
 		SCENE_QUIT,
 
 		FILE_EXPORT_MESH_LIBRARY,
@@ -346,8 +348,6 @@ private:
 	PopupMenu *tool_menu = nullptr;
 	PopupMenu *export_as_menu = nullptr;
 	Button *export_button = nullptr;
-	Button *search_button = nullptr;
-	TextureProgressBar *audio_vu = nullptr;
 
 	Timer *screenshot_timer = nullptr;
 
@@ -408,10 +408,8 @@ private:
 	EditorBuildProfileManager *build_profile_manager = nullptr;
 	EditorFileDialog *file_templates = nullptr;
 	EditorFileDialog *file_export_lib = nullptr;
-	EditorFileDialog *file_script = nullptr;
 	EditorFileDialog *file_android_build_source = nullptr;
 	EditorFileDialog *file_pack_zip = nullptr;
-	String current_path;
 	MenuButton *update_spinner = nullptr;
 
 	EditorMainScreen *editor_main_screen = nullptr;
@@ -422,7 +420,6 @@ private:
 
 	DependencyErrorDialog *dependency_error = nullptr;
 	HashMap<String, HashSet<String>> dependency_errors;
-	DependencyEditor *dependency_fixer = nullptr;
 	OrphanResourcesDialog *orphan_resources = nullptr;
 	ConfirmationDialog *open_imported = nullptr;
 	Button *new_inherited_button = nullptr;
@@ -463,10 +460,10 @@ private:
 	int current_menu_option = 0;
 
 	SubViewport *scene_root = nullptr; // Root of the scene being edited.
-	Object *current = nullptr;
 
 	Ref<Resource> saving_resource;
 	HashSet<Ref<Resource>> saving_resources_in_path;
+	HashMap<Ref<Resource>, List<Node *>> resource_count; // Keeps track of linked Resources from a Scene.
 
 	uint64_t update_spinner_step_msec = 0;
 	uint64_t update_spinner_step_frame = 0;
@@ -479,8 +476,7 @@ private:
 	SceneImportSettingsDialog *scene_import_settings = nullptr;
 	AudioStreamImportSettingsDialog *audio_stream_import_settings = nullptr;
 
-	String import_reload_fn;
-
+	HashSet<String> force_textfile_extensions;
 	HashSet<String> textfile_extensions;
 	HashSet<String> other_file_extensions;
 	HashSet<FileDialog *> file_dialogs;
@@ -518,6 +514,10 @@ private:
 	}
 
 	static Ref<Texture2D> _file_dialog_get_icon(const String &p_path);
+	static Ref<Texture2D> _file_dialog_get_thumbnail(const String &p_path);
+	static void _file_dialog_thumbnail_callback(const String &p_path, const Ref<Texture2D> &p_preview, const Ref<Texture2D> &p_small_preview, Ref<ImageTexture> p_texture);
+	Ref<ImageTexture> default_thumbnail;
+
 	static void _file_dialog_register(FileDialog *p_dialog);
 	static void _file_dialog_unregister(FileDialog *p_dialog);
 	static void _editor_file_dialog_register(EditorFileDialog *p_dialog);
@@ -695,7 +695,7 @@ private:
 	void _feature_profile_changed();
 	bool _is_class_editor_disabled_by_feature_profile(const StringName &p_class);
 
-	Ref<Texture2D> _get_class_or_script_icon(const String &p_class, const String &p_script_path, const String &p_fallback = "Object", bool p_fallback_script_to_theme = false);
+	Ref<Texture2D> _get_class_or_script_icon(const String &p_class, const String &p_script_path, const String &p_fallback = "", bool p_fallback_script_to_theme = false, bool p_skip_fallback_virtual = false);
 	Ref<Texture2D> _get_editor_theme_native_menu_icon(const StringName &p_name, bool p_global_menu, bool p_dark_mode) const;
 
 	void _pick_main_scene_custom_action(const String &p_custom_action_name);
@@ -730,6 +730,7 @@ public:
 	void _on_plugin_ready(Object *p_script, const String &p_activate_name);
 
 	bool call_build();
+	void call_run_scene(const String &p_scene, Vector<String> &r_args);
 
 	// This is a very naive estimation, but we need something now. Will be reworked later.
 	bool is_editor_ready() const { return is_inside_tree() && !waiting_for_first_scan; }
@@ -774,6 +775,9 @@ public:
 	static bool immediate_confirmation_dialog(const String &p_text, const String &p_ok_text = TTR("Ok"), const String &p_cancel_text = TTR("Cancel"), uint32_t p_wrap_width = 0);
 
 	static bool is_cmdline_mode();
+
+	static HashMap<String, Variant> get_initial_settings();
+
 	static void cleanup();
 
 	EditorPluginList *get_editor_plugins_force_input_forwarding() { return editor_plugins_force_input_forwarding; }
@@ -793,6 +797,8 @@ public:
 	void set_distraction_free_mode(bool p_enter);
 	bool is_distraction_free_mode_enabled() const;
 
+	void set_center_split_offset(int p_offset);
+
 	void set_addon_plugin_enabled(const String &p_addon, bool p_enabled, bool p_config_changed = false);
 	bool is_addon_plugin_enabled(const String &p_addon) const;
 
@@ -802,6 +808,13 @@ public:
 	void save_resource_in_path(const Ref<Resource> &p_resource, const String &p_path);
 	void save_resource(const Ref<Resource> &p_resource);
 	void save_resource_as(const Ref<Resource> &p_resource, const String &p_at_path = String());
+	bool is_resource_internal_to_scene(Ref<Resource> p_resource);
+	void gather_resources(const Variant &p_variant, List<Ref<Resource>> &r_list, bool p_subresources = false, bool p_allow_external = false);
+	void update_resource_count(Node *p_node, bool p_remove = false);
+	void update_node_reference(const Variant &p_value, Node *p_node, bool p_remove = false);
+	void clear_node_reference(Ref<Resource> p_res);
+	int get_resource_count(Ref<Resource> p_res);
+	List<Node *> get_resource_node_list(Ref<Resource> p_res);
 
 	void show_about() { _menu_option_confirm(HELP_ABOUT, false); }
 
@@ -836,7 +849,6 @@ public:
 	String get_preview_locale() const;
 	void set_preview_locale(const String &p_locale);
 
-	void fix_dependencies(const String &p_for_file);
 	int new_scene();
 	Error load_scene(const String &p_scene, bool p_ignore_broken_deps = false, bool p_set_inherited = false, bool p_force_open_imported = false, bool p_silent_change_tab = false);
 	Error load_resource(const String &p_resource, bool p_ignore_broken_deps = false);
@@ -931,7 +943,7 @@ public:
 
 	Ref<Script> get_object_custom_type_base(const Object *p_object) const;
 	StringName get_object_custom_type_name(const Object *p_object) const;
-	Ref<Texture2D> get_object_icon(const Object *p_object, const String &p_fallback = "Object");
+	Ref<Texture2D> get_object_icon(const Object *p_object, const String &p_fallback = "");
 	Ref<Texture2D> get_class_icon(const String &p_class, const String &p_fallback = "");
 
 	bool is_object_of_custom_type(const Object *p_object, const StringName &p_class);
@@ -1020,6 +1032,8 @@ public:
 };
 
 class EditorPluginList : public Object {
+	GDSOFTCLASS(EditorPluginList, Object);
+
 private:
 	Vector<EditorPlugin *> plugins_list;
 
