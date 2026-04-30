@@ -166,14 +166,15 @@ void EditorVariantTypePopupMenu::_notification(int p_what) {
 	}
 }
 
-void EditorVariantTypePopupMenu::popup(const Rect2i &p_bounds) {
+void EditorVariantTypePopupMenu::_popup_base(const Rect2i &p_bounds) {
 	if (icons_dirty) {
 		_update_menu_icons();
 		icons_dirty = false;
 	}
-	PopupMenu::popup(p_bounds);
+	PopupMenu::_popup_base(p_bounds);
 }
 
 EditorVariantTypePopupMenu::EditorVariantTypePopupMenu(bool p_remove_item) {
 	remove_item = p_remove_item;
+	set_search_bar_enabled_on_item_count(10);
 }

@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="IterateIK3D" inherits="ChainIK3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+<class name="IterateIK3D" inherits="ChainIK3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
 		A [SkeletonModifier3D] to approach the goal by repeating small rotations.
 	</brief_description>
 	<description>
 		Base class of [SkeletonModifier3D] to approach the goal by repeating small rotations.
 		Each bone chain (setting) has one effector, which is processed in order of the setting list. You can set some limitations for each joint.
+		[b]Note:[/b] All the methods in this class take an [code]index[/code] parameter. This parameter specifies which setting list entry to return if the IK has multiple entries (e.g. [code]settings/&lt;index&gt;/target_node[/code]).
 	</description>
 	<tutorials>
 	</tutorials>
@@ -144,6 +145,10 @@
 		<member name="angular_delta_limit" type="float" setter="set_angular_delta_limit" getter="get_angular_delta_limit" default="0.034906585">
 			The maximum amount each bone can rotate in a single iteration.
 			[b]Note:[/b] This limitation is applied during each iteration. For example, if [member max_iterations] is [code]4[/code] and [member angular_delta_limit] is [code]5[/code] degrees, the maximum rotation possible in a single frame is [code]20[/code] degrees.
+		</member>
+		<member name="deterministic" type="bool" setter="set_deterministic" getter="is_deterministic" default="false">
+			If [code]false[/code], the result is calculated from the previous frame's [IterateIK3D] result as the initial state.
+			If [code]true[/code], the previous frame's [IterateIK3D] result is discarded. At this point, the new result is calculated from the bone pose excluding the [IterateIK3D] as the initial state. This means the result will be always equal as long as the target position and the previous bone pose are the same. However, if [member angular_delta_limit] and [member max_iterations] are set too small, the end bone of the chain will never reach the target.
 		</member>
 		<member name="max_iterations" type="int" setter="set_max_iterations" getter="get_max_iterations" default="4">
 			The number of iteration loops used by the IK solver to produce more accurate results.

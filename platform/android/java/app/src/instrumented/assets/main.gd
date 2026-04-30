@@ -7,6 +7,7 @@ func _ready():
 	if Engine.has_singleton(_plugin_name):
 		_android_plugin = Engine.get_singleton(_plugin_name)
 		_android_plugin.connect("launch_tests", _launch_tests)
+		_android_plugin.connect("update_quit_on_go_back", _update_quit_on_go_back)
 	else:
 		printerr("Couldn't find plugin " + _plugin_name)
 		get_tree().quit()
@@ -16,6 +17,8 @@ func _launch_tests(test_label: String) -> void:
 	match test_label:
 		"javaclasswrapper_tests":
 			test_instance = JavaClassWrapperTests.new()
+		"file_access_tests":
+			test_instance = FileAccessTests.new()
 
 	if test_instance:
 		test_instance.__reset_tests()
@@ -24,6 +27,10 @@ func _launch_tests(test_label: String) -> void:
 		_android_plugin.onTestsCompleted(test_label, test_instance._test_completed, test_instance._test_assert_failures + incomplete_tests)
 	else:
 		_android_plugin.onTestsFailed(test_label, "Unable to launch tests")
+
+
+func _update_quit_on_go_back(quit_on_go_back: bool) -> void:
+	get_tree().quit_on_go_back = quit_on_go_back
 
 
 func _on_plugin_toast_button_pressed() -> void:

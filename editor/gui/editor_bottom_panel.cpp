@@ -30,20 +30,29 @@
 
 #include "editor_bottom_panel.h"
 
+#include "core/object/callable_mp.h"
 #include "editor/debugger/editor_debugger_node.h"
+#include "editor/docks/editor_dock.h"
 #include "editor/docks/editor_dock_manager.h"
 #include "editor/editor_node.h"
 #include "editor/editor_string_names.h"
 #include "editor/gui/editor_toaster.h"
 #include "editor/gui/editor_version_button.h"
+#include "editor/scene/editor_scene_tabs.h"
 #include "editor/settings/editor_command_palette.h"
+#include "editor/settings/editor_settings.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/gui/box_container.h"
 #include "scene/gui/button.h"
+#include "scene/gui/separator.h"
 #include "scene/gui/split_container.h"
 
 void EditorBottomPanel::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_READY: {
+			set_accessibility_region(true);
+		} break;
+
 		case NOTIFICATION_THEME_CHANGED: {
 			pin_button->set_button_icon(get_editor_theme_icon(SNAME("Pin")));
 			expand_button->set_button_icon(get_editor_theme_icon(SNAME("ExpandBottomDock")));
@@ -52,14 +61,14 @@ void EditorBottomPanel::_notification(int p_what) {
 }
 
 void EditorBottomPanel::_on_tab_changed(int p_idx) {
-	callable_mp(this, &EditorBottomPanel::_repaint).call_deferred();
+	_update_center_split_offset();
+	_repaint();
+	if (p_idx >= 0 && p_idx < get_tab_count()) {
+		set_accessibility_name(get_tab_title(p_idx));
+	}
 }
 
 void EditorBottomPanel::_theme_changed() {
-	Ref<StyleBox> bottom_tabbar_style = get_theme_stylebox("tabbar_background", "BottomPanel")->duplicate();
-	bottom_tabbar_style->set_content_margin(SIDE_RIGHT, bottom_hbox->get_minimum_size().x + bottom_tabbar_style->get_content_margin(SIDE_LEFT));
-	add_theme_style_override("tabbar_background", bottom_tabbar_style);
-
 	if (get_current_tab() == -1) {
 		// Hide panel when not showing anything.
 		remove_theme_style_override(SceneStringName(panel));
@@ -68,59 +77,122 @@ void EditorBottomPanel::_theme_changed() {
 	}
 }
 
+void EditorBottomPanel::set_bottom_panel_offset(int p_offset) {
+	EditorDock *current_tab = Object::cast_to<EditorDock>(get_current_tab_control());
+	if (current_tab) {
+		dock_offsets[current_tab->get_effective_layout_key()] = p_offset;
+	}
+}
+
+int EditorBottomPanel::get_bottom_panel_offset() {
+	EditorDock *current_tab = Object::cast_to<EditorDock>(get_current_tab_control());
+	if (current_tab) {
+		return dock_offsets[current_tab->get_effective_layout_key()];
+	}
+	return 0;
+}
+
 void EditorBottomPanel::_repaint() {
 	bool panel_collapsed = get_current_tab() == -1;
-	if (panel_collapsed == (get_previous_tab() == -1)) {
+
+	if (panel_collapsed && get_popup()) {
+		set_popup(nullptr);
+	} else if (!panel_collapsed && !get_popup()) {
+		set_popup(dock_context_popup);
+	}
+	if (!panel_collapsed && (previous_tab != -1)) {
 		return;
 	}
+	previous_tab = get_current_tab();
 
-	SplitContainer *center_split = Object::cast_to<SplitContainer>(get_parent());
+	DockSplitContainer *center_split = EditorNode::get_center_split();
 	ERR_FAIL_NULL(center_split);
 
 	center_split->set_dragger_visibility(panel_collapsed ? SplitContainer::DRAGGER_HIDDEN : SplitContainer::DRAGGER_VISIBLE);
 	center_split->set_collapsed(panel_collapsed);
 
-	pin_button->set_visible(!panel_collapsed);
 	expand_button->set_visible(!panel_collapsed);
 	if (expand_button->is_pressed()) {
-		EditorNode::get_top_split()->set_visible(panel_collapsed);
+		_expand_button_toggled(!panel_collapsed);
+	} else {
+		_theme_changed();
 	}
+}
 
-	_theme_changed();
+void EditorBottomPanel::dock_closed(EditorDock *p_dock) {
+	if (p_dock == get_current_tab_control()) {
+		hide_bottom_panel();
+	}
+}
+
+void EditorBottomPanel::dock_focused(EditorDock *p_dock, bool p_was_visible) {
+	if (p_was_visible && p_dock->is_visible()) {
+		hide_bottom_panel();
+	}
+}
+
+DockTabContainer::TabStyle EditorBottomPanel::get_tab_style() const {
+	return (TabStyle)EDITOR_GET("interface/editor/docks/bottom_dock_tab_style").operator int();
+}
+
+bool EditorBottomPanel::can_switch_dock() const {
+	return !is_locked();
+}
+
+Rect2 EditorBottomPanel::get_floating_dock_rect(EditorDock *p_dock) {
+	if (p_dock->is_visible_in_tree()) {
+		return DockTabContainer::get_default_floating_dock_rect(p_dock);
+	}
+	// If dock is  not visible, its size may not be initialized.
+	Rect2 ret;
+	ret.size = get_size();
+
+	int *stored_size = dock_offsets.getptr(p_dock->get_effective_layout_key());
+	if (stored_size) {
+		ret.size.y = -(*stored_size);
+	}
+	ret.size.y -= get_tab_bar()->get_size().y;
+	ret.position = get_tab_bar()->get_screen_position() - Vector2(0, ret.size.y);
+	return ret;
+}
+
+void EditorBottomPanel::load_selected_tab(int p_idx) {
+	EditorDock *selected_dock = get_dock(p_idx);
+	if (!selected_dock) {
+		p_idx = -1;
+	}
+	set_block_signals(true);
+	set_current_tab(p_idx);
+	set_block_signals(false);
 }
 
 void EditorBottomPanel::save_layout_to_config(Ref<ConfigFile> p_config_file, const String &p_section) const {
-	p_config_file->set_value(p_section, "selected_bottom_panel_item", get_current_tab() != -1 ? Variant(get_current_tab()) : Variant());
+	Dictionary offsets;
+	for (const KeyValue<String, int> &E : dock_offsets) {
+		offsets[E.key] = E.value / EDSCALE;
+	}
+	p_config_file->set_value(p_section, "bottom_panel_offsets", offsets);
 }
 
 void EditorBottomPanel::load_layout_from_config(Ref<ConfigFile> p_config_file, const String &p_section) {
-	if (p_config_file->has_section_key(p_section, "selected_bottom_panel_item")) {
-		int stored_current_tab = p_config_file->get_value(p_section, "selected_bottom_panel_item");
+	const Dictionary offsets = p_config_file->get_value(p_section, "bottom_panel_offsets", Dictionary());
+	const LocalVector<Variant> offset_list = offsets.get_key_list();
 
-		if (stored_current_tab >= 0 && stored_current_tab < get_tab_bar()->get_tab_count()) {
-			// Make sure we don't try to open contextual editors which are not enabled in the current context.
-			if (!get_tab_bar()->is_tab_hidden(stored_current_tab)) {
-				set_current_tab(stored_current_tab);
-				return;
-			}
-		}
+	for (const Variant &v : offset_list) {
+		dock_offsets[v] = (int)offsets[v] * EDSCALE;
 	}
-
-	// If there is no active tab we need to collapse the panel.
-	set_current_tab(-1);
+	_update_center_split_offset();
 }
 
 void EditorBottomPanel::make_item_visible(Control *p_item, bool p_visible, bool p_ignore_lock) {
 	// Don't allow changing tabs involuntarily when tabs are locked.
-	if (!p_ignore_lock && lock_panel_switching && pin_button->is_visible()) {
+	if (!p_ignore_lock && lock_panel_switching) {
 		return;
 	}
 
-	p_item->set_visible(p_visible);
-}
-
-void EditorBottomPanel::move_item_to_end(Control *p_item) {
-	move_child(p_item, -1);
+	EditorDock *dock = _get_dock_from_control(p_item);
+	ERR_FAIL_NULL(dock);
+	dock->set_visible(p_visible);
 }
 
 void EditorBottomPanel::hide_bottom_panel() {
@@ -129,19 +201,6 @@ void EditorBottomPanel::hide_bottom_panel() {
 
 void EditorBottomPanel::toggle_last_opened_bottom_panel() {
 	set_current_tab(get_current_tab() == -1 ? get_previous_tab() : -1);
-}
-
-void EditorBottomPanel::shortcut_input(const Ref<InputEvent> &p_event) {
-	if (p_event.is_null() || !p_event->is_pressed() || p_event->is_echo()) {
-		return;
-	}
-
-	for (uint32_t i = 0; i < dock_shortcuts.size(); i++) {
-		if (dock_shortcuts[i].is_valid() && dock_shortcuts[i]->matches_event(p_event)) {
-			bottom_docks[i]->set_visible(!bottom_docks[i]->is_visible());
-			break;
-		}
-	}
 }
 
 void EditorBottomPanel::_pin_button_toggled(bool p_pressed) {
@@ -154,63 +213,102 @@ void EditorBottomPanel::set_expanded(bool p_expanded) {
 
 void EditorBottomPanel::_expand_button_toggled(bool p_pressed) {
 	EditorNode::get_top_split()->set_visible(!p_pressed);
+
+	Button *distraction_free = EditorNode::get_singleton()->get_distraction_free_button();
+	distraction_free->set_meta("_scene_tabs_owned", !p_pressed);
+	EditorNode::get_singleton()->update_distraction_free_button_theme();
+	if (p_pressed) {
+		distraction_free->reparent(bottom_hbox);
+		bottom_hbox->move_child(distraction_free, -3);
+	} else {
+		distraction_free->get_parent()->remove_child(distraction_free);
+		EditorSceneTabs::get_singleton()->add_extra_button(distraction_free);
+	}
+	_theme_changed();
+}
+
+void EditorBottomPanel::_update_center_split_offset() {
+	DockSplitContainer *center_split = EditorNode::get_center_split();
+	ERR_FAIL_NULL(center_split);
+
+	center_split->set_split_offset(get_bottom_panel_offset());
+}
+
+EditorDock *EditorBottomPanel::_get_dock_from_control(Control *p_control) const {
+	return Object::cast_to<EditorDock>(p_control->get_parent());
 }
 
 Button *EditorBottomPanel::add_item(String p_text, Control *p_item, const Ref<Shortcut> &p_shortcut, bool p_at_front) {
-	p_item->set_name(p_text);
-	add_child(p_item);
-	if (p_at_front) {
-		move_child(p_item, 0);
-	}
-	bottom_docks.push_back(p_item);
-	dock_shortcuts.push_back(p_shortcut);
+	EditorDock *dock = memnew(EditorDock);
+	dock->add_child(p_item);
+	dock->set_title(p_text);
+	dock->set_dock_shortcut(p_shortcut);
+	dock->set_global(false);
+	dock->set_transient(true);
+	dock->set_default_slot(EditorDock::DOCK_SLOT_BOTTOM);
+	dock->set_available_layouts(EditorDock::DOCK_LAYOUT_HORIZONTAL);
+	EditorDockManager::get_singleton()->add_dock(dock);
+	bottom_docks.push_back(dock);
 
-	set_process_shortcut_input(is_processing_shortcut_input() || p_shortcut.is_valid());
+	p_item->show(); // Compatibility in case it was hidden.
 
 	// Still return a dummy button for compatibility reasons.
 	Button *tb = memnew(Button);
 	tb->set_toggle_mode(true);
-	tb->connect(SceneStringName(visibility_changed), callable_mp(this, &EditorBottomPanel::_on_button_visibility_changed).bind(tb, p_item));
+	tb->connect(SceneStringName(visibility_changed), callable_mp(this, &EditorBottomPanel::_on_button_visibility_changed).bind(tb, dock));
 	legacy_buttons.push_back(tb);
 	return tb;
 }
 
 void EditorBottomPanel::remove_item(Control *p_item) {
-	int item_idx = bottom_docks.find(p_item);
-	ERR_FAIL_COND_MSG(item_idx == -1, vformat("Cannot remove unknown dock \"%s\" from the bottom panel.", p_item->get_name()));
+	EditorDock *dock = _get_dock_from_control(p_item);
+	ERR_FAIL_NULL_MSG(dock, vformat("Cannot remove unknown dock \"%s\" from the bottom panel.", p_item->get_name()));
+
+	int item_idx = bottom_docks.find(dock);
+	ERR_FAIL_COND(item_idx == -1);
 
 	bottom_docks.remove_at(item_idx);
-	dock_shortcuts.remove_at(item_idx);
 
 	legacy_buttons[item_idx]->queue_free();
 	legacy_buttons.remove_at(item_idx);
 
-	remove_child(p_item);
+	EditorDockManager::get_singleton()->remove_dock(dock);
+	dock->remove_child(p_item);
+	dock->queue_free();
 }
 
-void EditorBottomPanel::_on_button_visibility_changed(Button *p_button, Control *p_control) {
-	int tab_index = get_tab_idx_from_control(p_control);
-	if (tab_index == -1) {
-		return;
+void EditorBottomPanel::_on_button_visibility_changed(Button *p_button, EditorDock *p_dock) {
+	if (p_button->is_visible()) {
+		p_dock->open();
+	} else {
+		p_dock->close();
 	}
-
-	// Ignore the tab if the button is hidden.
-	get_tab_bar()->set_tab_hidden(tab_index, !p_button->is_visible());
 }
 
-EditorBottomPanel::EditorBottomPanel() {
-	get_tab_bar()->connect(SceneStringName(gui_input), callable_mp(EditorDockManager::get_singleton(), &EditorDockManager::_dock_container_gui_input).bind(this));
+EditorBottomPanel::EditorBottomPanel() :
+		DockTabContainer(EditorDock::DOCK_SLOT_BOTTOM) {
+	layout = EditorDock::DOCK_LAYOUT_HORIZONTAL;
+	grid_rect = Rect2i(2, 4, 4, 2);
+
 	get_tab_bar()->connect("tab_changed", callable_mp(this, &EditorBottomPanel::_on_tab_changed));
 	set_tabs_position(TabPosition::POSITION_BOTTOM);
 	set_deselect_enabled(true);
+	set_theme_type_variation("BottomPanel");
 
 	bottom_hbox = memnew(HBoxContainer);
-	bottom_hbox->set_anchors_and_offsets_preset(Control::PRESET_RIGHT_WIDE);
-	bottom_hbox->set_h_grow_direction(Control::GROW_DIRECTION_END);
-	get_tab_bar()->add_child(bottom_hbox);
+	bottom_hbox->set_mouse_filter(MOUSE_FILTER_IGNORE);
+	get_internal_container()->add_child(bottom_hbox);
+
+	bottom_hbox->add_child(memnew(VSeparator));
 
 	editor_toaster = memnew(EditorToaster);
 	bottom_hbox->add_child(editor_toaster);
+
+	// NOTE: This is currently used only for ExportTemplateManager and hard-coded for that task.
+	progress_indicator = memnew(ProgressIndicator);
+	progress_indicator->set_v_size_flags(SIZE_SHRINK_CENTER);
+	progress_indicator->hide();
+	bottom_hbox->add_child(progress_indicator);
 
 	EditorVersionButton *version_btn = memnew(EditorVersionButton(EditorVersionButton::FORMAT_BASIC));
 	// Fade out the version label to be less prominent, but still readable.
@@ -222,14 +320,6 @@ EditorBottomPanel::EditorBottomPanel() {
 	Control *h_spacer = memnew(Control);
 	bottom_hbox->add_child(h_spacer);
 
-	pin_button = memnew(Button);
-	bottom_hbox->add_child(pin_button);
-	pin_button->hide();
-	pin_button->set_theme_type_variation("BottomPanelButton");
-	pin_button->set_toggle_mode(true);
-	pin_button->set_tooltip_text(TTRC("Pin Bottom Panel Switching"));
-	pin_button->connect(SceneStringName(toggled), callable_mp(this, &EditorBottomPanel::_pin_button_toggled));
-
 	expand_button = memnew(Button);
 	bottom_hbox->add_child(expand_button);
 	expand_button->hide();
@@ -239,6 +329,13 @@ EditorBottomPanel::EditorBottomPanel() {
 	expand_button->set_shortcut(ED_SHORTCUT_AND_COMMAND("editor/bottom_panel_expand", TTRC("Expand Bottom Panel"), KeyModifierMask::SHIFT | Key::F12));
 	expand_button->connect(SceneStringName(toggled), callable_mp(this, &EditorBottomPanel::_expand_button_toggled));
 
+	pin_button = memnew(Button);
+	bottom_hbox->add_child(pin_button);
+	pin_button->set_theme_type_variation("BottomPanelButton");
+	pin_button->set_toggle_mode(true);
+	pin_button->set_tooltip_text(TTRC("Pin Bottom Panel Switching"));
+	pin_button->connect(SceneStringName(toggled), callable_mp(this, &EditorBottomPanel::_pin_button_toggled));
+
 	callable_mp(this, &EditorBottomPanel::_repaint).call_deferred();
 }
 
@@ -246,4 +343,31 @@ EditorBottomPanel::~EditorBottomPanel() {
 	for (Button *b : legacy_buttons) {
 		memdelete(b);
 	}
+}
+
+void ProgressIndicator::_notification(int p_what) {
+	if (p_what == NOTIFICATION_THEME_CHANGED) {
+		const Ref<Texture2D> ring_texture = get_editor_theme_icon(SNAME("ProgressRing"));
+		set_progress_texture(ring_texture);
+		set_tint_progress(get_theme_color(SNAME("accent_color"), EditorStringName(Editor)));
+		set_under_texture(ring_texture);
+	}
+}
+
+void ProgressIndicator::_bind_methods() {
+	ADD_SIGNAL(MethodInfo("clicked"));
+}
+
+void ProgressIndicator::gui_input(const Ref<InputEvent> &p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
+		emit_signal("clicked");
+	}
+}
+
+ProgressIndicator::ProgressIndicator() {
+	set_fill_mode(FILL_CLOCKWISE);
+	set_tint_under(Color());
+	set_step(0.0);
+	set_max(1.0);
 }

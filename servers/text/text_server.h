@@ -137,6 +137,7 @@ public:
 		OVERRUN_ADD_ELLIPSIS = 1 << 2,
 		OVERRUN_ENFORCE_ELLIPSIS = 1 << 3,
 		OVERRUN_JUSTIFICATION_AWARE = 1 << 4,
+		OVERRUN_SHORT_STRING_ELLIPSIS = 1 << 5,
 	};
 
 	enum GraphemeFlag {
@@ -229,7 +230,7 @@ public:
 	void _draw_hex_code_box_number(const RID &p_canvas, int64_t p_size, const Vector2 &p_pos, uint8_t p_index, const Color &p_color) const;
 
 protected:
-	double vp_oversampling = 0.0;
+	static double vp_oversampling;
 	HashMap<char32_t, char32_t> diacritics_map;
 	void _diacritics_map_add(const String &p_from, char32_t p_to);
 	void _init_diacritics_map();
@@ -260,6 +261,7 @@ public:
 	virtual String get_support_data_info() const = 0;
 	virtual bool save_support_data(const String &p_filename) const = 0;
 	virtual PackedByteArray get_support_data() const = 0;
+	virtual bool is_locale_using_support_data(const String &p_locale) const { return false; }
 
 	virtual bool is_locale_right_to_left(const String &p_locale) const = 0;
 
@@ -329,6 +331,14 @@ public:
 
 	virtual void font_set_modulate_color_glyphs(const RID &p_font_rid, bool p_modulate) = 0;
 	virtual bool font_is_modulate_color_glyphs(const RID &p_font_rid) const = 0;
+
+	virtual int64_t font_get_palette_count(const RID &p_font_rid) const = 0;
+	virtual String font_get_palette_name(const RID &p_font_rid, int64_t p_index) const = 0;
+	virtual Vector<Color> font_get_palette_colors(const RID &p_font_rid, int64_t p_index) const = 0;
+	virtual void font_set_palette_custom_colors(const RID &p_font_rid, const Vector<Color> &p_colors) = 0;
+	virtual Vector<Color> font_get_palette_custom_colors(const RID &p_font_rid) const = 0;
+	virtual int64_t font_get_used_palette(const RID &p_font_rid) const = 0;
+	virtual void font_set_used_palette(const RID &p_font_rid, int64_t p_index) = 0;
 
 	virtual void font_set_hinting(const RID &p_font_rid, Hinting p_hinting) = 0;
 	virtual Hinting font_get_hinting(const RID &p_font_rid) const = 0;
@@ -505,6 +515,7 @@ public:
 	virtual int64_t shaped_get_run_count(const RID &p_shaped) const = 0;
 	virtual String shaped_get_run_text(const RID &p_shaped, int64_t p_index) const = 0;
 	virtual Vector2i shaped_get_run_range(const RID &p_shaped, int64_t p_index) const = 0;
+	virtual Vector2i shaped_get_run_glyph_range(const RID &p_shaped, int64_t p_index) const = 0;
 	virtual RID shaped_get_run_font_rid(const RID &p_shaped, int64_t p_index) const = 0;
 	virtual int shaped_get_run_font_size(const RID &p_shaped, int64_t p_index) const = 0;
 	virtual String shaped_get_run_language(const RID &p_shaped, int64_t p_index) const = 0;
@@ -609,7 +620,8 @@ public:
 
 	TypedArray<Vector3i> parse_structured_text(StructuredTextParser p_parser_type, const Array &p_args, const String &p_text) const;
 
-	virtual void set_current_drawn_item_oversampling(double p_vp_oversampling) { vp_oversampling = p_vp_oversampling; }
+	static void set_current_drawn_item_oversampling(double p_vp_oversampling) { vp_oversampling = p_vp_oversampling; }
+	static double get_current_drawn_item_oversampling() { return vp_oversampling; }
 
 	virtual void cleanup() {}
 

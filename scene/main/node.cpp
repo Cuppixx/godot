@@ -38,18 +38,26 @@ STATIC_ASSERT_INCOMPLETE_TYPE(class, Shader);
 STATIC_ASSERT_INCOMPLETE_TYPE(class, OS);
 STATIC_ASSERT_INCOMPLETE_TYPE(class, Engine);
 
+#include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/io/resource.h"
 #include "core/io/resource_loader.h"
+#include "core/object/class_db.h"
 #include "core/object/message_queue.h"
 #include "core/object/script_language.h"
 #include "core/string/print_string.h"
-#include "instance_placeholder.h"
 #include "scene/animation/tween.h"
-#include "scene/debugger/scene_debugger.h"
+#include "scene/main/instance_placeholder.h"
 #include "scene/main/multiplayer_api.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/viewport.h"
 #include "scene/main/window.h"
 #include "scene/resources/packed_scene.h"
-#include "viewport.h"
+#include "servers/display/accessibility_server.h"
+
+#ifdef DEBUG_ENABLED
+#include "scene/debugger/scene_debugger.h"
+#endif
 
 #ifdef DEBUG_ENABLED
 SafeNumeric<uint64_t> Node::total_node_count{ 0 };
@@ -61,7 +69,7 @@ void Node::_notification(int p_notification) {
 	switch (p_notification) {
 		case NOTIFICATION_ACCESSIBILITY_INVALIDATE: {
 			if (data.accessibility_element.is_valid()) {
-				DisplayServer::get_singleton()->accessibility_free_element(data.accessibility_element);
+				AccessibilityServer::get_singleton()->free_element(data.accessibility_element);
 				data.accessibility_element = RID();
 			}
 		} break;
@@ -70,7 +78,7 @@ void Node::_notification(int p_notification) {
 			RID ae = get_accessibility_element();
 			ERR_FAIL_COND(ae.is_null());
 
-			DisplayServer::get_singleton()->accessibility_update_set_name(ae, get_name());
+			AccessibilityServer::get_singleton()->update_set_name(ae, get_name());
 
 			// Node children.
 			if (!accessibility_override_tree_hierarchy()) {
@@ -83,7 +91,7 @@ void Node::_notification(int p_notification) {
 					if (child_node->is_part_of_edited_scene()) {
 						continue;
 					}
-					DisplayServer::get_singleton()->accessibility_update_add_child(ae, child_node->get_accessibility_element());
+					AccessibilityServer::get_singleton()->update_add_child(ae, child_node->get_accessibility_element());
 				}
 			}
 		} break;
@@ -178,9 +186,7 @@ void Node::_notification(int p_notification) {
 		} break;
 
 		case NOTIFICATION_POST_ENTER_TREE: {
-			if (data.auto_translate_mode != AUTO_TRANSLATE_MODE_DISABLED) {
-				notification(NOTIFICATION_TRANSLATION_CHANGED);
-			}
+			notification(NOTIFICATION_TRANSLATION_CHANGED);
 		} break;
 
 		case NOTIFICATION_EXIT_TREE: {
@@ -189,7 +195,7 @@ void Node::_notification(int p_notification) {
 
 			if (data.tree->is_accessibility_supported() && !is_part_of_edited_scene()) {
 				if (data.accessibility_element.is_valid()) {
-					DisplayServer::get_singleton()->accessibility_free_element(data.accessibility_element);
+					AccessibilityServer::get_singleton()->free_element(data.accessibility_element);
 					data.accessibility_element = RID();
 				}
 				data.tree->_accessibility_notify_change(this, true);
@@ -279,7 +285,13 @@ void Node::_notification(int p_notification) {
 				ERR_PRINT("Attempted to free a node that is currently added to the SceneTree from a thread. This is not permitted, use queue_free() instead. Node has not been freed.");
 				return;
 			}
-
+#ifdef TOOLS_ENABLED
+			if (Engine::get_singleton()->is_editor_hint() && data.tree && this == data.tree->get_edited_scene_root()) {
+				cancel_free();
+				ERR_PRINT(vformat("Something attempted to free the root Node of a scene (\"%s\"). This is not supported inside the editor, so the Node was not freed.", get_name()));
+				return;
+			}
+#endif
 			if (data.owner) {
 				_clean_up_owner();
 			}
@@ -488,9 +500,9 @@ void Node::_propagate_physics_interpolation_reset_requested(bool p_requested) {
 	data.blocked--;
 }
 
-void Node::move_child(Node *p_child, int p_index) {
+void Node::move_child(RequiredParam<Node> rp_child, int p_index) {
 	ERR_FAIL_COND_MSG(data.tree && !Thread::is_main_thread(), "Moving child node positions inside the SceneTree is only allowed from the main thread. Use call_deferred(\"move_child\",child,index).");
-	ERR_FAIL_NULL(p_child);
+	EXTRACT_PARAM_OR_FAIL(p_child, rp_child);
 	ERR_FAIL_COND_MSG(p_child->data.parent != this, "Child is not a child of this node.");
 
 	_update_children_cache();
@@ -893,8 +905,7 @@ bool Node::can_process_notification(int p_what) const {
 }
 
 bool Node::can_process() const {
-	ERR_FAIL_COND_V(!is_inside_tree(), false);
-	return !data.tree->is_suspended() && _can_process(data.tree->is_paused());
+	return is_inside_tree() && !data.tree->is_suspended() && _can_process(data.tree->is_paused());
 }
 
 bool Node::_can_process(bool p_paused) const {
@@ -956,6 +967,10 @@ void Node::set_physics_interpolation_mode(PhysicsInterpolationMode p_mode) {
 	if (is_physics_interpolated() && is_inside_tree()) {
 		propagate_notification(NOTIFICATION_RESET_PHYSICS_INTERPOLATION);
 	}
+}
+
+bool Node::is_physics_interpolated_and_enabled() const {
+	return SceneTree::is_fti_enabled() && is_physics_interpolated();
 }
 
 void Node::reset_physics_interpolation() {
@@ -1090,10 +1105,6 @@ void Node::_remove_tree_from_process_thread_group() {
 }
 
 void Node::_add_tree_to_process_thread_group(Node *p_owner) {
-	if (_is_any_processing()) {
-		_add_to_process_thread_group();
-	}
-
 	data.process_thread_group_owner = p_owner;
 	if (p_owner != nullptr) {
 		data.process_group = p_owner->data.process_group;
@@ -1101,12 +1112,16 @@ void Node::_add_tree_to_process_thread_group(Node *p_owner) {
 		data.process_group = &data.tree->default_process_group;
 	}
 
+	if (_is_any_processing()) {
+		_add_to_process_thread_group();
+	}
+
 	for (KeyValue<StringName, Node *> &K : data.children) {
 		if (K.value->data.process_thread_group != PROCESS_THREAD_GROUP_INHERIT) {
 			continue;
 		}
 
-		K.value->_add_to_process_thread_group();
+		K.value->_add_tree_to_process_thread_group(p_owner);
 	}
 }
 bool Node::is_processing_internal() const {
@@ -1460,7 +1475,7 @@ void Node::set_name(const StringName &p_name) {
 }
 
 // Returns a clear description of this node depending on what is available. Useful for error messages.
-String Node::get_description() const {
+String Node::get_description(bool p_show_not_in_tree) const {
 	String description;
 	if (is_inside_tree()) {
 		description = String(get_path());
@@ -1468,6 +1483,9 @@ String Node::get_description() const {
 		description = get_name();
 		if (description.is_empty()) {
 			description = get_class();
+		}
+		if (p_show_not_in_tree) {
+			description += " (not inside tree)";
 		}
 	}
 	return description;
@@ -1690,11 +1708,11 @@ void Node::_add_child_nocheck(Node *p_child, const StringName &p_name, InternalM
 	emit_signal(SNAME("child_order_changed"));
 }
 
-void Node::add_child(Node *p_child, bool p_force_readable_name, InternalMode p_internal) {
+void Node::add_child(RequiredParam<Node> rp_child, bool p_force_readable_name, InternalMode p_internal) {
 	ERR_FAIL_COND_MSG(data.tree && !Thread::is_main_thread(), "Adding children to a node inside the SceneTree is only allowed from the main thread. Use call_deferred(\"add_child\",node).");
 
 	ERR_THREAD_GUARD
-	ERR_FAIL_NULL(p_child);
+	EXTRACT_PARAM_OR_FAIL(p_child, rp_child);
 	ERR_FAIL_COND_MSG(p_child == this, vformat("Can't add child '%s' to itself.", p_child->get_name())); // adding to itself!
 	ERR_FAIL_COND_MSG(p_child->data.parent, vformat("Can't add child '%s' to '%s', already has a parent '%s'.", p_child->get_name(), get_name(), p_child->data.parent->get_name())); //Fail if node has a parent
 #ifdef DEBUG_ENABLED
@@ -1714,9 +1732,9 @@ void Node::add_child(Node *p_child, bool p_force_readable_name, InternalMode p_i
 	_add_child_nocheck(p_child, p_child->data.name, p_internal);
 }
 
-void Node::add_sibling(Node *p_sibling, bool p_force_readable_name) {
+void Node::add_sibling(RequiredParam<Node> rp_sibling, bool p_force_readable_name) {
 	ERR_FAIL_COND_MSG(data.tree && !Thread::is_main_thread(), "Adding a sibling to a node inside the SceneTree is only allowed from the main thread. Use call_deferred(\"add_sibling\",node).");
-	ERR_FAIL_NULL(p_sibling);
+	EXTRACT_PARAM_OR_FAIL(p_sibling, rp_sibling);
 	ERR_FAIL_COND_MSG(p_sibling == this, vformat("Can't add sibling '%s' to itself.", p_sibling->get_name())); // adding to itself!
 	ERR_FAIL_NULL(data.parent);
 	ERR_FAIL_COND_MSG(data.parent->data.blocked > 0, "Parent node is busy setting up children, `add_sibling()` failed. Consider using `add_sibling.call_deferred(sibling)` instead.");
@@ -1726,9 +1744,9 @@ void Node::add_sibling(Node *p_sibling, bool p_force_readable_name) {
 	data.parent->_move_child(p_sibling, get_index() + 1);
 }
 
-void Node::remove_child(Node *p_child) {
+void Node::remove_child(RequiredParam<Node> rp_child) {
 	ERR_FAIL_COND_MSG(data.tree && !Thread::is_main_thread(), "Removing children from a node inside the SceneTree is only allowed from the main thread. Use call_deferred(\"remove_child\",node).");
-	ERR_FAIL_NULL(p_child);
+	EXTRACT_PARAM_OR_FAIL(p_child, rp_child);
 	ERR_FAIL_COND_MSG(data.blocked > 0, "Parent node is busy adding/removing children, `remove_child()` can't be called at this time. Consider using `remove_child.call_deferred(child)` instead.");
 	ERR_FAIL_COND(p_child->data.parent != this);
 
@@ -2033,9 +2051,9 @@ TypedArray<Node> Node::find_children(const String &p_pattern, const String &p_ty
 	return ret;
 }
 
-void Node::reparent(Node *p_parent, bool p_keep_global_transform) {
+void Node::reparent(RequiredParam<Node> rp_parent, bool p_keep_global_transform) {
 	ERR_THREAD_GUARD
-	ERR_FAIL_NULL(p_parent);
+	EXTRACT_PARAM_OR_FAIL(p_parent, rp_parent);
 	ERR_FAIL_NULL_MSG(data.parent, "Node needs a parent to be reparented.");
 	ERR_FAIL_COND_MSG(p_parent == this, vformat("Can't reparent '%s' to itself.", p_parent->get_name()));
 
@@ -2130,8 +2148,8 @@ Window *Node::get_last_exclusive_window() const {
 	return w;
 }
 
-bool Node::is_ancestor_of(const Node *p_node) const {
-	ERR_FAIL_NULL_V(p_node, false);
+bool Node::is_ancestor_of(RequiredParam<const Node> rp_node) const {
+	EXTRACT_PARAM_OR_FAIL_V(p_node, rp_node, false);
 	Node *p = p_node->data.parent;
 	while (p) {
 		if (p == this) {
@@ -2143,10 +2161,10 @@ bool Node::is_ancestor_of(const Node *p_node) const {
 	return false;
 }
 
-bool Node::is_greater_than(const Node *p_node) const {
+bool Node::is_greater_than(RequiredParam<const Node> rp_node) const {
 	// parent->get_child(1) > parent->get_child(0) > parent
 
-	ERR_FAIL_NULL_V(p_node, false);
+	EXTRACT_PARAM_OR_FAIL_V(p_node, rp_node, false);
 	ERR_FAIL_COND_V(!data.tree, false);
 	ERR_FAIL_COND_V(p_node->data.tree != data.tree, false);
 
@@ -2320,8 +2338,8 @@ Node *Node::find_common_parent_with(const Node *p_node) const {
 	return const_cast<Node *>(common_parent);
 }
 
-NodePath Node::get_path_to(const Node *p_node, bool p_use_unique_path) const {
-	ERR_FAIL_NULL_V(p_node, NodePath());
+NodePath Node::get_path_to(RequiredParam<const Node> rp_node, bool p_use_unique_path) const {
+	EXTRACT_PARAM_OR_FAIL_V(p_node, rp_node, NodePath());
 
 	if (this == p_node) {
 		return NodePath(".");
@@ -2345,7 +2363,7 @@ NodePath Node::get_path_to(const Node *p_node, bool p_use_unique_path) const {
 		common_parent = common_parent->data.parent;
 	}
 
-	ERR_FAIL_NULL_V(common_parent, NodePath()); //nodes not in the same tree
+	ERR_FAIL_NULL_V_MSG(common_parent, NodePath(), vformat("No path can be resolved between the nodes %s and %s as they share no common ancestor.", get_description(true), p_node->get_description(true)));
 
 	visited.clear();
 
@@ -2556,37 +2574,6 @@ String Node::get_tree_string() {
 	return _get_tree_string(this);
 }
 
-void Node::_propagate_reverse_notification(int p_notification) {
-	data.blocked++;
-
-	for (HashMap<StringName, Node *>::Iterator I = data.children.last(); I; --I) {
-		I->value->_propagate_reverse_notification(p_notification);
-	}
-
-	notification(p_notification, true);
-	data.blocked--;
-}
-
-void Node::_propagate_deferred_notification(int p_notification, bool p_reverse) {
-	ERR_FAIL_COND(!is_inside_tree());
-
-	data.blocked++;
-
-	if (!p_reverse) {
-		MessageQueue::get_singleton()->push_notification(this, p_notification);
-	}
-
-	for (KeyValue<StringName, Node *> &K : data.children) {
-		K.value->_propagate_deferred_notification(p_notification, p_reverse);
-	}
-
-	if (p_reverse) {
-		MessageQueue::get_singleton()->push_notification(this, p_notification);
-	}
-
-	data.blocked--;
-}
-
 void Node::propagate_notification(int p_notification) {
 	ERR_THREAD_GUARD
 	data.blocked++;
@@ -2629,7 +2616,7 @@ void Node::_propagate_replace_owner(Node *p_owner, Node *p_by_owner) {
 	data.blocked--;
 }
 
-Ref<Tween> Node::create_tween() {
+RequiredResult<Tween> Node::create_tween() {
 	ERR_THREAD_GUARD_V(Ref<Tween>());
 
 	SceneTree *tree = data.tree;
@@ -2667,9 +2654,9 @@ String Node::get_editor_description() const {
 	return data.editor_description;
 }
 
-void Node::set_editable_instance(Node *p_node, bool p_editable) {
+void Node::set_editable_instance(RequiredParam<Node> rp_node, bool p_editable) {
 	ERR_THREAD_GUARD
-	ERR_FAIL_NULL(p_node);
+	EXTRACT_PARAM_OR_FAIL(p_node, rp_node);
 	ERR_FAIL_COND(!is_ancestor_of(p_node));
 	if (!p_editable) {
 		p_node->data.editable_instance = false;
@@ -2860,6 +2847,19 @@ Node *Node::_duplicate(int p_flags, HashMap<const Node *, Node *> *r_duplimap) c
 				}
 			}
 		}
+
+		for (List<const Node *>::Element *N = node_tree.front(); N; N = N->next()) {
+			const Node *source_node = N->get();
+			if (source_node->get_scene_file_path().is_empty()) {
+				continue;
+			}
+
+			NodePath relative_path = get_path_to(source_node);
+			Node *duplicated_node = node->get_node_or_null(relative_path);
+			ERR_CONTINUE(!duplicated_node);
+
+			duplicated_node->data.editable_instance = source_node->data.editable_instance;
+		}
 	}
 
 	if (get_name() != String()) {
@@ -2932,6 +2932,10 @@ Node *Node::duplicate(int p_flags) const {
 
 	ERR_FAIL_NULL_V_MSG(dupe, nullptr, "Failed to duplicate node.");
 
+	if (p_flags & DUPLICATE_SCRIPTS) {
+		_duplicate_scripts(this, dupe);
+	}
+
 	_duplicate_properties(this, this, dupe, p_flags);
 
 	if (p_flags & DUPLICATE_SIGNALS) {
@@ -2943,20 +2947,25 @@ Node *Node::duplicate(int p_flags) const {
 
 #ifdef TOOLS_ENABLED
 Node *Node::duplicate_from_editor(HashMap<const Node *, Node *> &r_duplimap) const {
-	return duplicate_from_editor(r_duplimap, HashMap<Ref<Resource>, Ref<Resource>>());
+	HashMap<Node *, HashMap<Ref<Resource>, Ref<Resource>>> tmp;
+	return duplicate_from_editor(r_duplimap, nullptr, tmp);
 }
 
-Node *Node::duplicate_from_editor(HashMap<const Node *, Node *> &r_duplimap, const HashMap<Ref<Resource>, Ref<Resource>> &p_resource_remap) const {
+Node *Node::duplicate_from_editor(HashMap<const Node *, Node *> &r_duplimap, Node *p_scene_root, HashMap<Node *, HashMap<Ref<Resource>, Ref<Resource>>> &p_resource_remap) const {
 	int flags = DUPLICATE_SIGNALS | DUPLICATE_GROUPS | DUPLICATE_SCRIPTS | DUPLICATE_USE_INSTANTIATION | DUPLICATE_FROM_EDITOR;
 	Node *dupe = _duplicate(flags, &r_duplimap);
 
 	ERR_FAIL_NULL_V_MSG(dupe, nullptr, "Failed to duplicate node.");
 
+	if (flags & DUPLICATE_SCRIPTS) {
+		_duplicate_scripts(this, dupe);
+	}
+
 	_duplicate_properties(this, this, dupe, flags);
 
 	// This is used by SceneTreeDock's paste functionality. When pasting to foreign scene, resources are duplicated.
-	if (!p_resource_remap.is_empty()) {
-		remap_node_resources(dupe, p_resource_remap);
+	if (p_scene_root) {
+		remap_node_resources(dupe, p_scene_root, p_resource_remap);
 	}
 
 	// Duplication of signals must happen after all the node descendants have been copied,
@@ -2967,7 +2976,9 @@ Node *Node::duplicate_from_editor(HashMap<const Node *, Node *> &r_duplimap, con
 	return dupe;
 }
 
-void Node::remap_node_resources(Node *p_node, const HashMap<Ref<Resource>, Ref<Resource>> &p_resource_remap) const {
+void Node::remap_node_resources(Node *p_node, Node *p_scene_root, HashMap<Node *, HashMap<Ref<Resource>, Ref<Resource>>> &p_resource_remap) const {
+	Node *local_scene = p_node->is_instance() ? p_node : (p_node->get_owner() ? p_node->get_owner() : p_scene_root);
+
 	List<PropertyInfo> props;
 	p_node->get_property_list(&props);
 
@@ -2977,23 +2988,39 @@ void Node::remap_node_resources(Node *p_node, const HashMap<Ref<Resource>, Ref<R
 		}
 
 		Variant v = p_node->get(E.name);
-		if (v.is_ref_counted()) {
-			Ref<Resource> res = v;
-			if (res.is_valid()) {
-				if (p_resource_remap.has(res)) {
-					p_node->set(E.name, p_resource_remap[res]);
-					remap_nested_resources(res, p_resource_remap);
-				}
+		if (!v.is_ref_counted()) {
+			continue;
+		}
+		Ref<Resource> res = v;
+		if (res.is_null()) {
+			continue;
+		}
+
+		if (res->is_local_to_scene()) {
+			if (local_scene == res->get_local_scene()) {
+				continue;
+			}
+			Ref<Resource> dup = SceneState::get_remap_resource(res, p_resource_remap, nullptr, local_scene);
+			p_node->set(E.name, dup);
+			continue;
+		}
+
+		if (res->is_built_in()) {
+			// Use nullptr instead of a specific node (current scene root node) to represent the scene,
+			// as the Make Scene Root operation may be executed.
+			if (p_resource_remap[nullptr].has(res)) {
+				p_node->set(E.name, p_resource_remap[nullptr][res]);
+				remap_nested_resources(res, p_resource_remap[nullptr]);
 			}
 		}
 	}
 
 	for (int i = 0; i < p_node->get_child_count(); i++) {
-		remap_node_resources(p_node->get_child(i), p_resource_remap);
+		remap_node_resources(p_node->get_child(i), p_scene_root, p_resource_remap);
 	}
 }
 
-void Node::remap_nested_resources(Ref<Resource> p_resource, const HashMap<Ref<Resource>, Ref<Resource>> &p_resource_remap) const {
+void Node::remap_nested_resources(Ref<Resource> p_resource, HashMap<Ref<Resource>, Ref<Resource>> &p_resource_remap) const {
 	List<PropertyInfo> props;
 	p_resource->get_property_list(&props);
 
@@ -3024,6 +3051,20 @@ void Node::_emit_editor_state_changed() {
 }
 #endif
 
+void Node::_duplicate_scripts(const Node *p_original, Node *p_copy) const {
+	bool is_valid = false;
+	Variant scr = p_original->get(CoreStringName(script), &is_valid);
+	if (is_valid) {
+		p_copy->set(CoreStringName(script), scr);
+	}
+
+	for (int i = 0; i < p_original->get_child_count(false); i++) {
+		Node *copy_child = p_copy->get_child(i, false);
+		ERR_FAIL_NULL_MSG(copy_child, "Child node disappeared while duplicating.");
+		_duplicate_scripts(p_original->get_child(i, false), copy_child);
+	}
+}
+
 // Duplicate node's properties.
 // This has to be called after nodes have been duplicated since there might be properties
 // of type Node that can be updated properly only if duplicated node tree is complete.
@@ -3031,15 +3072,8 @@ void Node::_duplicate_properties(const Node *p_root, const Node *p_original, Nod
 	List<PropertyInfo> props;
 	p_original->get_property_list(&props);
 	const StringName &script_property_name = CoreStringName(script);
-	if (p_flags & DUPLICATE_SCRIPTS) {
-		bool is_valid = false;
-		Variant scr = p_original->get(script_property_name, &is_valid);
-		if (is_valid) {
-			p_copy->set(script_property_name, scr);
-		}
-	}
 	for (const PropertyInfo &E : props) {
-		if (!(E.usage & PROPERTY_USAGE_STORAGE)) {
+		if (!(p_flags & DUPLICATE_INTERNAL_STATE) && !(E.usage & PROPERTY_USAGE_STORAGE)) {
 			continue;
 		}
 		const StringName name = E.name;
@@ -3166,12 +3200,12 @@ static void find_owned_by(Node *p_by, Node *p_node, List<Node *> *p_owned) {
 	}
 }
 
-void Node::replace_by(Node *p_node, bool p_keep_groups) {
+void Node::replace_by(RequiredParam<Node> rp_node, bool p_keep_groups) {
 	ERR_THREAD_GUARD
-	ERR_FAIL_NULL(p_node);
+	EXTRACT_PARAM_OR_FAIL(p_node, rp_node);
 	ERR_FAIL_COND(p_node->data.parent);
 
-	List<Node *> owned = data.owned;
+	List<Node *> owned(data.owned);
 	List<Node *> owned_by_owner;
 	Node *owner = (data.owner == this) ? p_node : data.owner;
 
@@ -3205,16 +3239,14 @@ void Node::replace_by(Node *p_node, bool p_keep_groups) {
 
 	emit_signal(SNAME("replacing_by"), p_node);
 
-	while (get_child_count()) {
-		Node *child = get_child(0);
+	// Move non-internal children to `p_node`.
+	while (get_child_count(false)) {
+		Node *child = get_child(0, false);
 		remove_child(child);
-		if (!child->is_internal()) {
-			// Add the custom children to the p_node.
-			Node *child_owner = child->get_owner() == this ? p_node : child->get_owner();
-			child->set_owner(nullptr);
-			p_node->add_child(child);
-			child->set_owner(child_owner);
-		}
+		Node *child_owner = child->get_owner() == this ? p_node : child->get_owner();
+		child->set_owner(nullptr);
+		p_node->add_child(child);
+		child->set_owner(child_owner);
 	}
 
 	p_node->set_owner(owner);
@@ -3459,7 +3491,7 @@ void Node::get_argument_options(const StringName &p_function, int p_idx, List<St
 	if (p_idx == 0 && (pf == "has_node" || pf == "get_node" || pf == "get_node_or_null")) {
 		_add_nodes_to_options(this, this, r_options);
 	} else if (p_idx == 0 && (pf == "add_to_group" || pf == "remove_from_group" || pf == "is_in_group")) {
-		HashMap<StringName, String> global_groups = ProjectSettings::get_singleton()->get_global_groups_list();
+		HashMap<StringName, String> global_groups(ProjectSettings::get_singleton()->get_global_groups_list());
 		for (const KeyValue<StringName, String> &E : global_groups) {
 			r_options->push_back(E.key.operator String().quote());
 		}
@@ -3571,7 +3603,7 @@ void Node::_call_unhandled_key_input(const Ref<InputEvent> &p_event) {
 
 void Node::_validate_property(PropertyInfo &p_property) const {
 	if ((p_property.name == "process_thread_group_order" || p_property.name == "process_thread_messages") && data.process_thread_group == PROCESS_THREAD_GROUP_INHERIT) {
-		p_property.usage = 0;
+		p_property.usage = PROPERTY_USAGE_NONE;
 	}
 }
 
@@ -3705,8 +3737,8 @@ RID Node::get_accessibility_element() const {
 	}
 	if (unlikely(data.accessibility_element.is_null())) {
 		Window *w = get_non_popup_window();
-		if (w && w->get_window_id() != DisplayServer::INVALID_WINDOW_ID && get_window()->is_visible()) {
-			data.accessibility_element = DisplayServer::get_singleton()->accessibility_create_element(w->get_window_id(), DisplayServer::ROLE_CONTAINER);
+		if (w && w->get_window_id() != DisplayServerEnums::INVALID_WINDOW_ID && get_window()->is_visible()) {
+			data.accessibility_element = AccessibilityServer::get_singleton()->create_element(w->get_window_id(), AccessibilityServerEnums::ROLE_CONTAINER);
 		}
 	}
 	return data.accessibility_element;
@@ -3819,7 +3851,7 @@ void Node::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tree"), &Node::get_tree);
 	ClassDB::bind_method(D_METHOD("create_tween"), &Node::create_tween);
 
-	ClassDB::bind_method(D_METHOD("duplicate", "flags"), &Node::duplicate, DEFVAL(DUPLICATE_USE_INSTANTIATION | DUPLICATE_SIGNALS | DUPLICATE_GROUPS | DUPLICATE_SCRIPTS));
+	ClassDB::bind_method(D_METHOD("duplicate", "flags"), &Node::duplicate, DEFVAL(DUPLICATE_DEFAULT));
 	ClassDB::bind_method(D_METHOD("replace_by", "node", "keep_groups"), &Node::replace_by, DEFVAL(false));
 
 	ClassDB::bind_method(D_METHOD("set_scene_instance_load_placeholder", "load_placeholder"), &Node::set_scene_instance_load_placeholder);
@@ -3933,6 +3965,7 @@ void Node::_bind_methods() {
 	BIND_CONSTANT(NOTIFICATION_VP_MOUSE_ENTER);
 	BIND_CONSTANT(NOTIFICATION_VP_MOUSE_EXIT);
 	BIND_CONSTANT(NOTIFICATION_WM_POSITION_CHANGED);
+	BIND_CONSTANT(NOTIFICATION_WM_OUTPUT_MAX_LINEAR_VALUE_CHANGED);
 	BIND_CONSTANT(NOTIFICATION_OS_MEMORY_WARNING);
 	BIND_CONSTANT(NOTIFICATION_TRANSLATION_CHANGED);
 	BIND_CONSTANT(NOTIFICATION_WM_ABOUT);
@@ -3943,6 +3976,8 @@ void Node::_bind_methods() {
 	BIND_CONSTANT(NOTIFICATION_APPLICATION_FOCUS_IN);
 	BIND_CONSTANT(NOTIFICATION_APPLICATION_FOCUS_OUT);
 	BIND_CONSTANT(NOTIFICATION_TEXT_SERVER_CHANGED);
+	BIND_CONSTANT(NOTIFICATION_APPLICATION_PIP_MODE_ENTERED);
+	BIND_CONSTANT(NOTIFICATION_APPLICATION_PIP_MODE_EXITED);
 
 	BIND_CONSTANT(NOTIFICATION_ACCESSIBILITY_UPDATE);
 	BIND_CONSTANT(NOTIFICATION_ACCESSIBILITY_INVALIDATE);
@@ -3969,6 +4004,8 @@ void Node::_bind_methods() {
 	BIND_ENUM_CONSTANT(DUPLICATE_GROUPS);
 	BIND_ENUM_CONSTANT(DUPLICATE_SCRIPTS);
 	BIND_ENUM_CONSTANT(DUPLICATE_USE_INSTANTIATION);
+	BIND_ENUM_CONSTANT(DUPLICATE_INTERNAL_STATE);
+	BIND_ENUM_CONSTANT(DUPLICATE_DEFAULT);
 
 	BIND_ENUM_CONSTANT(INTERNAL_MODE_DISABLED);
 	BIND_ENUM_CONSTANT(INTERNAL_MODE_FRONT);
@@ -3994,8 +4031,8 @@ void Node::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "name", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "set_name", "get_name");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "unique_name_in_owner", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_unique_name_in_owner", "is_unique_name_in_owner");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "scene_file_path", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "set_scene_file_path", "get_scene_file_path");
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "owner", PROPERTY_HINT_RESOURCE_TYPE, "Node", PROPERTY_USAGE_NONE), "set_owner", "get_owner");
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "multiplayer", PROPERTY_HINT_RESOURCE_TYPE, "MultiplayerAPI", PROPERTY_USAGE_NONE), "", "get_multiplayer");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "owner", PROPERTY_HINT_RESOURCE_TYPE, Node::get_class_static(), PROPERTY_USAGE_NONE), "set_owner", "get_owner");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "multiplayer", PROPERTY_HINT_RESOURCE_TYPE, MultiplayerAPI::get_class_static(), PROPERTY_USAGE_NONE), "", "get_multiplayer");
 
 	ADD_GROUP("Process", "process_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "process_mode", PROPERTY_HINT_ENUM, "Inherit,Pausable,When Paused,Always,Disabled"), "set_process_mode", "get_process_mode");

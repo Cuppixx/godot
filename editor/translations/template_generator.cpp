@@ -47,6 +47,9 @@ TranslationTemplateGenerator::MessageMap TranslationTemplateGenerator::parse(con
 
 		for (const Vector<String> &entry : parsed_from_file) {
 			ERR_CONTINUE(entry.is_empty());
+			if (entry[0].is_empty()) {
+				continue;
+			}
 
 			const String &msgctxt = (entry.size() > 1) ? entry[1] : String();
 			const String &msgid_plural = (entry.size() > 2) ? entry[2] : String();
@@ -71,8 +74,12 @@ TranslationTemplateGenerator::MessageMap TranslationTemplateGenerator::parse(con
 		}
 	}
 
+	EditorTranslationParser::get_singleton()->customize_strings(raw);
+
 	MessageMap result;
-	for (const Vector<String> &entry : raw) {
+	for (Vector<String> &entry : raw) {
+		entry.resize(5); // Ensure size, in case the strings were customized.
+
 		const String &msgid = entry[0];
 		const String &msgctxt = entry[1];
 		const String &plural = entry[2];
