@@ -31,6 +31,7 @@
 #include "ustring.h"
 
 #include "core/crypto/crypto_core.h"
+#include "core/io/ip_address.h"
 #include "core/math/color.h"
 #include "core/math/math_funcs.h"
 #include "core/object/object.h"
@@ -1221,6 +1222,9 @@ Vector<double> String::split_floats(const String &p_splitter, bool p_allow_empty
 	Vector<double> ret;
 	int from = 0;
 	int len = length();
+	if (len == 0) {
+		return ret;
+	}
 
 	String buffer = *this;
 	while (true) {
@@ -1248,6 +1252,9 @@ Vector<float> String::split_floats_mk(const Vector<String> &p_splitters, bool p_
 	Vector<float> ret;
 	int from = 0;
 	int len = length();
+	if (len == 0) {
+		return ret;
+	}
 
 	String buffer = *this;
 	while (true) {
@@ -1280,6 +1287,9 @@ Vector<int> String::split_ints(const String &p_splitter, bool p_allow_empty) con
 	Vector<int> ret;
 	int from = 0;
 	int len = length();
+	if (len == 0) {
+		return ret;
+	}
 
 	while (true) {
 		int end = find(p_splitter, from);
@@ -1304,6 +1314,9 @@ Vector<int> String::split_ints_mk(const Vector<String> &p_splitters, bool p_allo
 	Vector<int> ret;
 	int from = 0;
 	int len = length();
+	if (len == 0) {
+		return ret;
+	}
 
 	while (true) {
 		int idx;
@@ -5196,43 +5209,7 @@ String String::validate_filename() const {
 }
 
 bool String::is_valid_ip_address() const {
-	if (find_char(':') >= 0) {
-		Vector<String> ip = split(":");
-		for (int i = 0; i < ip.size(); i++) {
-			const String &n = ip[i];
-			if (n.is_empty()) {
-				continue;
-			}
-			if (n.is_valid_hex_number(false)) {
-				int64_t nint = n.hex_to_int();
-				if (nint < 0 || nint > 0xffff) {
-					return false;
-				}
-				continue;
-			}
-			if (!n.is_valid_ip_address()) {
-				return false;
-			}
-		}
-
-	} else {
-		Vector<String> ip = split(".");
-		if (ip.size() != 4) {
-			return false;
-		}
-		for (int i = 0; i < ip.size(); i++) {
-			const String &n = ip[i];
-			if (!n.is_valid_int()) {
-				return false;
-			}
-			int val = n.to_int();
-			if (val < 0 || val > 255) {
-				return false;
-			}
-		}
-	}
-
-	return true;
+	return IPAddress::is_valid_ip_address(*this);
 }
 
 bool String::is_resource_file() const {
@@ -5524,7 +5501,11 @@ String String::sprintf(const Array &values, bool *error) const {
 					// Get basic number.
 					String str;
 					if (!as_unsigned) {
-						str = String::num_int64(Math::abs(value), base, capitalize);
+						if (value == INT64_MIN) { // INT64_MIN can't be represented as positive value.
+							str = String::num_int64(value, base, capitalize).trim_prefix("-");
+						} else {
+							str = String::num_int64(Math::abs(value), base, capitalize);
+						}
 					} else {
 						uint64_t uvalue = *((uint64_t *)&value);
 						// In unsigned hex, if the value fits in 32 bits, trim it down to that.
