@@ -59,6 +59,8 @@ protected:
 	virtual void remove_child_notify(Node *p_child) override;
 
 public:
+	Control *get_child_as_control(int p_index) const;
+
 	DockSplitContainer();
 };
 
@@ -89,7 +91,9 @@ private:
 
 	// To access splits easily by index.
 	Vector<DockSplitContainer *> vsplits;
+	DockSplitContainer *main_vsplit = nullptr;
 	DockSplitContainer *main_hsplit = nullptr;
+	DockSplitContainer *bottom_hsplit = nullptr;
 
 	DockTabContainer *dock_slots[EditorDock::DOCK_SLOT_MAX];
 	Vector<WindowWrapper *> dock_windows;
@@ -130,13 +134,17 @@ public:
 	void set_tab_icon_max_width(int p_max_width);
 
 	void add_vsplit(DockSplitContainer *p_split);
-	void set_hsplit(DockSplitContainer *p_split);
+	void set_main_vsplit(DockSplitContainer *p_split);
+	void set_main_hsplit(DockSplitContainer *p_split);
+	void set_bottom_hsplit(DockSplitContainer *p_split);
 	void register_dock_slot(DockTabContainer *p_tab_container);
 	int get_vsplit_count() const;
 	PopupMenu *get_docks_menu();
 
 	void save_docks_to_config(Ref<ConfigFile> p_layout, const String &p_section) const;
 	void load_docks_from_config(Ref<ConfigFile> p_layout, const String &p_section, bool p_first_load = false);
+
+	void set_dock_slot_highlighted(int p_slot, bool p_highlighted);
 
 	void set_dock_enabled(EditorDock *p_dock, bool p_enabled);
 	void close_dock(EditorDock *p_dock);
