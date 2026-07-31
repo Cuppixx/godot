@@ -90,6 +90,7 @@ Patches:
 - `0003-remove-tinydds-qoi.patch` (GH-97582)
 - `0004-ambiguous-calls.patch` (GH-103968)
 - `0005-msvc-include-ctype.patch` (GH-106155)
+- `0006-clang-warning-exclude.patch` (GH-121603)
 
 
 ## brotli
@@ -488,6 +489,10 @@ Files generated from upstream source:
 4. Delete `data/out` folder and rebuild data: `cd data && rm -rf ./out && make`
 5. Copy `source/data/out/icudt{ICU_VERSION}l.dat` to the `{GODOT_SOURCE}/thirdparty/icu4c/icudt_godot.dat`
 
+Patches:
+
+- `0001-remove-final.patch` (GH-121603)
+
 
 ## jolt_physics
 
@@ -654,7 +659,7 @@ File extracted from upstream source:
 ## mbedtls
 
 - Upstream: https://github.com/Mbed-TLS/mbedtls
-- Version: 3.6.5 (e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df, 2025)
+- Version: 3.6.7 (068ff080b369adfac81509f9b57b2afabaf82dc5, 2026)
 - License: Apache 2.0
 
 File extracted from upstream release tarball:
