@@ -206,7 +206,7 @@ String EditorExportPlatformAppleEmbedded::get_export_option_warning(const Editor
 			if (OS::get_singleton()->get_current_rendering_method() == "gl_compatibility") {
 				return TTR("\"Shader Baker\" doesn't work with the Compatibility renderer.");
 			} else if (OS::get_singleton()->get_current_rendering_method() != export_renderer) {
-				return vformat(TTR("The editor is currently using a different renderer than what the target platform will use. \"Shader Baker\" won't be able to include core shaders. Switch to \"%s\" renderer temporarily to fix this."), export_renderer);
+				return vformat(TTR("The editor is currently using a different renderer than what the target platform will use. \"Shader Baker\" won't be able to include core shaders. Switch to the \"%s\" renderer temporarily to fix this."), export_renderer);
 			}
 		}
 	}
@@ -1659,14 +1659,36 @@ Error EditorExportPlatformAppleEmbedded::_export_apple_embedded_plugins(const Re
 		pbx_id.low_bits = 0;
 
 		HashMap<String, PluginConfigAppleEmbedded::SPMPackage> unique_packages;
+
+		// Collect from .gdip plugin configs
 		for (int i = 0; i < enabled_plugins.size(); i++) {
 			for (const PluginConfigAppleEmbedded::SPMPackage &package : enabled_plugins[i].spm_packages) {
 				if (!unique_packages.has(package.url)) {
 					unique_packages[package.url] = package;
 				} else {
 					for (const String &product : package.products) {
-						if (unique_packages[package.url].products.find(product) == -1) {
+						if (!unique_packages[package.url].products.has(product)) {
 							unique_packages[package.url].products.push_back(product);
+						}
+					}
+				}
+			}
+		}
+
+		// Also collect from EditorExportPlugins (added using add_apple_embedded_platform_spm_package() method)
+		Vector<Ref<EditorExportPlugin>> export_plugins = EditorExport::get_singleton()->get_export_plugins();
+		for (int i = 0; i < export_plugins.size(); i++) {
+			for (const EditorExportPlugin::AppleEmbeddedSPMPackage &ep_package : export_plugins[i]->get_apple_embedded_platform_spm_packages()) {
+				if (!unique_packages.has(ep_package.url)) {
+					PluginConfigAppleEmbedded::SPMPackage package;
+					package.url = ep_package.url;
+					package.version = ep_package.version;
+					package.products = ep_package.products;
+					unique_packages[ep_package.url] = package;
+				} else {
+					for (const String &product : ep_package.products) {
+						if (!unique_packages[ep_package.url].products.has(product)) {
+							unique_packages[ep_package.url].products.push_back(product);
 						}
 					}
 				}
@@ -1924,6 +1946,21 @@ Error EditorExportPlatformAppleEmbedded::_export_project_helper(const Ref<Editor
 		return err;
 	}
 
+	// Generate a unique name for the launch screen to avoid caching.
+	{
+		const String custom_launch_image_2x = p_preset->get("storyboard/custom_image@2x");
+		const String custom_launch_image_3x = p_preset->get("storyboard/custom_image@3x");
+
+		String launch_image_hash;
+		if (custom_launch_image_2x.length() > 0 && custom_launch_image_3x.length() > 0) {
+			Vector<String> launch_scr_files;
+			launch_scr_files.push_back(custom_launch_image_2x);
+			launch_scr_files.push_back(custom_launch_image_3x);
+			launch_image_hash = "_" + FileAccess::get_multiple_md5(launch_scr_files);
+		}
+		launch_screen_image_file_name = "SplashImage" + launch_image_hash;
+	}
+
 	//export rest of the files
 	int ret = unzGoToFirstFile(src_pkg_zip);
 	Vector<uint8_t> project_file_data;
@@ -1952,6 +1989,8 @@ Error EditorExportPlatformAppleEmbedded::_export_project_helper(const Ref<Editor
 		unzCloseCurrentFile(src_pkg_zip);
 
 		//write
+
+		file = file.replace("Images.xcassets/SplashImage.imageset", "Images.xcassets/" + launch_screen_image_file_name + ".imageset");
 
 		if (files_to_parse.has(file)) {
 			_fix_config_file(p_preset, data, config_data, p_debug);
@@ -2076,7 +2115,7 @@ Error EditorExportPlatformAppleEmbedded::_export_project_helper(const Ref<Editor
 
 			if (appnames.is_empty()) {
 				domain->set_locale_override(lang);
-				const String &name = domain->translate(project_name, String());
+				String name = domain->translate(project_name, String());
 				if (name != project_name) {
 					f->store_line("CFBundleDisplayName = \"" + name.xml_escape(true) + "\";");
 				}
@@ -2128,13 +2167,14 @@ Error EditorExportPlatformAppleEmbedded::_export_project_helper(const Ref<Editor
 	}
 
 	{
-		String splash_image_path = binary_dir + "/Images.xcassets/SplashImage.imageset/";
+		String splash_image_path = binary_dir + "/Images.xcassets/" + launch_screen_image_file_name + ".imageset/";
 
 		Ref<DirAccess> launch_screen_da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
 		if (launch_screen_da.is_null()) {
 			add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Could not access the filesystem."));
 			return ERR_CANT_CREATE;
 		}
+		launch_screen_da->make_dir_recursive(splash_image_path);
 
 		print_line("Exporting launch screen storyboard");
 
@@ -2189,8 +2229,6 @@ Error EditorExportPlatformAppleEmbedded::_export_project_helper(const Ref<Editor
 	if (ep.step("Making .xcarchive", 3)) {
 		return ERR_SKIP;
 	}
-
-	String platform_name = get_platform_name();
 
 	String archive_path = p_path.get_basename() + ".xcarchive";
 	List<String> archive_args;

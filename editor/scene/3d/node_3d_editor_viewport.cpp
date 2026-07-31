@@ -72,7 +72,12 @@
 #include "scene/resources/gradient.h"
 #include "scene/resources/immediate_mesh.h"
 #include "scene/resources/packed_scene.h"
+#include "servers/physics_3d/physics_server_3d_types.h"
 #include "servers/rendering/rendering_server.h"
+
+#ifndef PHYSICS_3D_DISABLED
+#include "servers/physics_3d/direct_states/physics_direct_space_state_3d.h"
+#endif // PHYSICS_3D_DISABLED
 
 using namespace Node3DEditorConstants;
 
@@ -214,8 +219,12 @@ void ViewportNavigationControl::_update_navigation() {
 
 			const Vector3 direction = forward + right;
 			const Vector3 motion = direction * speed;
-			viewport->view_3d_controller->cursor.pos += motion;
-			viewport->view_3d_controller->cursor.eye_pos += motion;
+			viewport->view_3d_controller->cursor.pos_x += motion.x;
+			viewport->view_3d_controller->cursor.pos_y += motion.y;
+			viewport->view_3d_controller->cursor.pos_z += motion.z;
+			viewport->view_3d_controller->cursor.eye_pos_x += motion.x;
+			viewport->view_3d_controller->cursor.eye_pos_y += motion.y;
+			viewport->view_3d_controller->cursor.eye_pos_z += motion.z;
 		} break;
 
 		case View3DController::NAV_MODE_LOOK: {
@@ -1031,7 +1040,7 @@ void Node3DEditorViewport::_vertex_snap_cancel() {
 		}
 	}
 	vertex_snap_original_positions.clear();
-	set_message(TTR("Vertex Snap Canceled."), 3);
+	set_message(TTR("Vertex snap canceled."), 3);
 	surface->queue_redraw();
 }
 
@@ -1182,7 +1191,7 @@ Vector3 Node3DEditorViewport::_get_screen_to_space(const Vector3 &p_vector3) {
 	Vector2 screen_he = cm.get_viewport_half_extents();
 
 	Transform3D camera_transform;
-	camera_transform.translate_local(view_3d_controller->cursor.pos);
+	camera_transform.translate_local(Vector3(view_3d_controller->cursor.pos_x, view_3d_controller->cursor.pos_y, view_3d_controller->cursor.pos_z));
 	camera_transform.basis.rotate(Vector3(1, 0, 0), -view_3d_controller->cursor.x_rot);
 	camera_transform.basis.rotate(Vector3(0, 1, 0), -view_3d_controller->cursor.y_rot);
 	camera_transform.translate_local(0, 0, view_3d_controller->cursor.distance);
@@ -2905,7 +2914,7 @@ void Node3DEditorViewport::_sinput(const Ref<InputEvent> &p_event) {
 					continue;
 				}
 
-				spatial_editor->emit_signal(SNAME("transform_key_request"), sp, "", sp->get_transform());
+				spatial_editor->emit_signal(SNAME("transform_3d_key_request"), sp, "", sp->get_transform());
 			}
 
 			set_message(TTR("Animation Key Inserted."));
@@ -4368,7 +4377,9 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 
 		} break;
 		case VIEW_CENTER_TO_ORIGIN: {
-			view_3d_controller->cursor.pos = Vector3(0, 0, 0);
+			view_3d_controller->cursor.pos_x = 0;
+			view_3d_controller->cursor.pos_y = 0;
+			view_3d_controller->cursor.pos_z = 0;
 			_disable_follow_mode();
 
 		} break;
@@ -4400,7 +4411,7 @@ void Node3DEditorViewport::_menu_option(int p_option) {
 				Transform3D xform = camera_transform;
 				if (view_3d_controller->is_orthogonal()) {
 					Vector3 offset = camera_transform.basis.xform(Vector3(0, 0, view_3d_controller->cursor.distance));
-					xform.origin = view_3d_controller->cursor.pos + offset;
+					xform.origin = Vector3(view_3d_controller->cursor.pos_x, view_3d_controller->cursor.pos_y, view_3d_controller->cursor.pos_z) + offset;
 				} else {
 					xform.scale_basis(sp->get_scale());
 				}
@@ -4719,7 +4730,9 @@ void Node3DEditorViewport::_preview_camera_property_changed() {
 void Node3DEditorViewport::_sync_cursor_from_transform(const Transform3D &p_transform) {
 	const Basis basis = p_transform.basis;
 
-	view_3d_controller->cursor.eye_pos = p_transform.origin;
+	view_3d_controller->cursor.eye_pos_x = p_transform.origin.x;
+	view_3d_controller->cursor.eye_pos_y = p_transform.origin.y;
+	view_3d_controller->cursor.eye_pos_z = p_transform.origin.z;
 	view_3d_controller->cursor.x_rot = -basis.get_euler().x;
 	view_3d_controller->cursor.y_rot = -basis.get_euler().y;
 	view_3d_controller->cursor.unsnapped_x_rot = view_3d_controller->cursor.x_rot;
@@ -4729,7 +4742,9 @@ void Node3DEditorViewport::_sync_cursor_from_transform(const Transform3D &p_tran
 	if (view_3d_controller->is_orthogonal()) {
 		distance = (get_zfar() - get_znear()) / 2.0;
 	}
-	view_3d_controller->cursor.pos = p_transform.origin - basis.get_column(2) * distance;
+	view_3d_controller->cursor.pos_x = p_transform.origin.x - basis.get_column(2).x * distance;
+	view_3d_controller->cursor.pos_y = p_transform.origin.y - basis.get_column(2).y * distance;
+	view_3d_controller->cursor.pos_z = p_transform.origin.z - basis.get_column(2).z * distance;
 }
 
 void Node3DEditorViewport::_update_centered_labels() {
@@ -5115,7 +5130,10 @@ void Node3DEditorViewport::update_transform_gizmo_highlight() {
 
 void Node3DEditorViewport::set_state(const Dictionary &p_state) {
 	if (p_state.has("position")) {
-		view_3d_controller->cursor.pos = p_state["position"];
+		Vector3 pos = p_state["position"];
+		view_3d_controller->cursor.pos_x = pos.x;
+		view_3d_controller->cursor.pos_y = pos.y;
+		view_3d_controller->cursor.pos_z = pos.z;
 	}
 	if (p_state.has("x_rotation")) {
 		view_3d_controller->cursor.x_rot = p_state["x_rotation"];
@@ -5271,7 +5289,7 @@ void Node3DEditorViewport::set_state(const Dictionary &p_state) {
 
 Dictionary Node3DEditorViewport::get_state() const {
 	Dictionary d;
-	d["position"] = view_3d_controller->cursor.pos;
+	d["position"] = Vector3(view_3d_controller->cursor.pos_x, view_3d_controller->cursor.pos_y, view_3d_controller->cursor.pos_z);
 	d["x_rotation"] = view_3d_controller->cursor.x_rot;
 	d["y_rotation"] = view_3d_controller->cursor.y_rot;
 	d["distance"] = view_3d_controller->cursor.distance;
@@ -5371,7 +5389,9 @@ void Node3DEditorViewport::focus_selection() {
 		center /= count;
 	}
 
-	view_3d_controller->cursor.pos = center;
+	view_3d_controller->cursor.pos_x = center.x;
+	view_3d_controller->cursor.pos_y = center.y;
+	view_3d_controller->cursor.pos_z = center.z;
 }
 
 void Node3DEditorViewport::assign_pending_data_pointers(Node3D *p_preview_node, AABB *p_preview_bounds, AcceptDialog *p_accept) {
@@ -5380,18 +5400,18 @@ void Node3DEditorViewport::assign_pending_data_pointers(Node3D *p_preview_node, 
 	accept = p_accept;
 }
 
-void _insert_rid_recursive(Node *node, HashSet<RID> &rids) {
-	CollisionObject3D *co = Object::cast_to<CollisionObject3D>(node);
+void _insert_collision_object_rid_recursive(Node *p_node, HashSet<RID> &p_col_obj_rids) {
+	CollisionObject3D *col_obj = Object::cast_to<CollisionObject3D>(p_node);
 
-	if (co) {
-		rids.insert(co->get_rid());
-	} else if (node->is_class("CSGShape3D")) { // HACK: We should avoid referencing module logic.
-		rids.insert(node->call("_get_root_collision_instance"));
+	if (col_obj) {
+		p_col_obj_rids.insert(col_obj->get_rid());
+	} else if (p_node->is_class("CSGShape3D")) { // HACK: We should avoid referencing module logic.
+		p_col_obj_rids.insert(p_node->call("_get_root_collision_instance"));
 	}
 
-	for (int i = 0; i < node->get_child_count(); i++) {
-		Node *child = node->get_child(i);
-		_insert_rid_recursive(child, rids);
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		Node *child = p_node->get_child(i);
+		_insert_collision_object_rid_recursive(child, p_col_obj_rids);
 	}
 }
 
@@ -5402,28 +5422,28 @@ Vector3 Node3DEditorViewport::_get_instance_position(const Point2 &p_pos, Node3D
 	Vector3 world_ray = get_ray(p_pos);
 	Vector3 world_pos = get_ray_pos(p_pos);
 
-	PhysicsDirectSpaceState3D *ss = get_tree()->get_root()->get_world_3d()->get_direct_space_state();
-
-	HashSet<RID> rids;
+	HashSet<RID> col_obj_rids_to_exclude;
 
 	if (preview_node && preview_node->get_child_count() > 0) {
-		_insert_rid_recursive(preview_node, rids);
+		_insert_collision_object_rid_recursive(preview_node, col_obj_rids_to_exclude);
 	} else if (!preview_node->is_inside_tree() && !ruler->is_inside_tree()) {
 		const List<Node *> &selection = editor_selection->get_top_selected_node_list();
 
 		Node3D *first_selected_node = Object::cast_to<Node3D>(selection.front()->get());
 
 		if (first_selected_node) {
-			_insert_rid_recursive(first_selected_node, rids);
+			_insert_collision_object_rid_recursive(first_selected_node, col_obj_rids_to_exclude);
 		}
 	}
 
-	PhysicsDirectSpaceState3D::RayParameters ray_params;
-	ray_params.exclude = rids;
+	PS3DT::RayParameters ray_params;
+	ray_params.exclude = col_obj_rids_to_exclude;
 	ray_params.from = world_pos;
 	ray_params.to = world_pos + world_ray * camera->get_far();
 
-	PhysicsDirectSpaceState3D::RayResult result;
+	PhysicsDirectSpaceState3D *ss = get_tree()->get_root()->get_world_3d()->get_direct_space_state();
+	PS3DT::RayResult result;
+
 	if (ss->intersect_ray(ray_params, result) && (preview_node->get_child_count() > 0 || !preview_node->is_inside_tree())) {
 		// Calculate an offset for the `p_node` such that the its bounding box is on top of and touching the contact surface's plane.
 
@@ -5464,7 +5484,7 @@ Vector3 Node3DEditorViewport::_get_instance_position(const Point2 &p_pos, Node3D
 
 	// Plane facing the camera using fallback distance.
 	if (is_orthogonal) {
-		plane = Plane(world_ray, view_3d_controller->cursor.pos - world_ray * (view_3d_controller->cursor.distance - FALLBACK_DISTANCE));
+		plane = Plane(world_ray, Vector3(view_3d_controller->cursor.pos_x, view_3d_controller->cursor.pos_y, view_3d_controller->cursor.pos_z) - world_ray * (view_3d_controller->cursor.distance - FALLBACK_DISTANCE));
 	} else {
 		plane = Plane(world_ray, world_pos + world_ray * FALLBACK_DISTANCE);
 	}
@@ -6043,9 +6063,10 @@ bool Node3DEditorViewport::can_drop_data_fw(const Point2 &p_point, const Variant
 					"[b]Hold Shift:[/b] Add as children of selected node.",
 					files.size()) +
 			"\n" +
-			TTRN("[b]Hold Alt:[/b] Add as child of root node.",
-					"[b]Hold Alt:[/b] Add as children of root node.",
-					files.size());
+			vformat(TTRN("[b]Hold %s:[/b] Add as child of root node.",
+							"[b]Hold %s:[/b] Add as children of root node.",
+							files.size()),
+					keycode_get_string((Key)KeyModifierMask::ALT));
 
 	if (files.size() > 1) {
 		title = TTR("Dropping multiple files...");

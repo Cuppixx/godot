@@ -563,20 +563,20 @@ struct CSharpScriptDepSort {
 void CSharpLanguage::reload_all_scripts() {
 #ifdef GD_MONO_HOT_RELOAD
 	if (is_assembly_reloading_needed()) {
-		reload_assemblies(false);
+		reload_assemblies();
 	}
 #endif
 }
 
-void CSharpLanguage::reload_scripts(const Array &p_scripts, bool p_soft_reload) {
+void CSharpLanguage::reload_scripts(const Array &p_scripts) {
 #ifdef GD_MONO_HOT_RELOAD
 	if (is_assembly_reloading_needed()) {
-		reload_assemblies(p_soft_reload);
+		reload_assemblies();
 	}
 #endif
 }
 
-void CSharpLanguage::reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {
+void CSharpLanguage::reload_tool_script(const Ref<Script> &p_script) {
 	CRASH_COND(!Engine::get_singleton()->is_editor_hint());
 
 #ifdef TOOLS_ENABLED
@@ -585,7 +585,7 @@ void CSharpLanguage::reload_tool_script(const Ref<Script> &p_script, bool p_soft
 
 #ifdef GD_MONO_HOT_RELOAD
 	if (is_assembly_reloading_needed()) {
-		reload_assemblies(p_soft_reload);
+		reload_assemblies();
 	}
 #endif
 }
@@ -622,7 +622,7 @@ bool CSharpLanguage::is_assembly_reloading_needed() {
 	return true;
 }
 
-void CSharpLanguage::reload_assemblies(bool p_soft_reload) {
+void CSharpLanguage::reload_assemblies() {
 	ERR_FAIL_NULL(gdmono);
 	if (!gdmono->is_runtime_initialized()) {
 		return;
@@ -865,7 +865,7 @@ void CSharpLanguage::reload_assemblies(bool p_soft_reload) {
 #endif
 
 		if (!scr->get_path().is_empty() && !scr->get_path().begins_with("csharp://")) {
-			scr->reload(p_soft_reload);
+			scr->reload();
 
 			if (!scr->valid) {
 				scr->pending_reload_instances.clear();
@@ -1647,7 +1647,7 @@ bool CSharpInstance::property_get_revert(const StringName &p_name, Variant &r_re
 }
 
 void CSharpInstance::get_method_list(List<MethodInfo> *p_list) const {
-	if (!script->is_valid() || !script->valid) {
+	if (!script->is_script_valid() || !script->valid) {
 		return;
 	}
 
@@ -1668,7 +1668,7 @@ bool CSharpInstance::has_method(const StringName &p_method) const {
 }
 
 int CSharpInstance::get_method_argument_count(const StringName &p_method, bool *r_is_valid) const {
-	if (!script->is_valid() || !script->valid) {
+	if (!script->is_script_valid() || !script->valid) {
 		if (r_is_valid) {
 			*r_is_valid = false;
 		}

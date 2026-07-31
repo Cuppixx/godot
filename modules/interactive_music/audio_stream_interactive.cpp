@@ -33,6 +33,8 @@
 #include "core/config/engine.h"
 #include "core/math/math_funcs.h"
 #include "core/object/class_db.h"
+#include "servers/audio/audio_driver.h"
+#include "servers/audio/audio_server.h"
 
 AudioStreamInteractive::AudioStreamInteractive() {
 }
@@ -42,10 +44,6 @@ Ref<AudioStreamPlayback> AudioStreamInteractive::instantiate_playback() {
 	playback_transitioner.instantiate();
 	playback_transitioner->stream = Ref<AudioStreamInteractive>(this);
 	return playback_transitioner;
-}
-
-String AudioStreamInteractive::get_stream_name() const {
-	return "Transitioner";
 }
 
 void AudioStreamInteractive::set_clip_count(int p_count) {
@@ -888,12 +886,19 @@ void AudioStreamPlaybackInteractive::_mix_internal(int p_frames) {
 		mix_buffer[i] = AudioFrame(0, 0);
 	}
 
+	bool any_active = false;
 	for (int i = 0; i < stream->clip_count; i++) {
 		if (!states[i].active) {
 			continue;
 		}
 
 		_mix_internal_state(i, p_frames);
+
+		any_active = states[i].active || any_active;
+	}
+	if (!any_active) {
+		active = false;
+		playback_current = -1;
 	}
 }
 

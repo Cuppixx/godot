@@ -406,6 +406,13 @@ void RenderingDeviceGraph::_add_command_to_graph(ResourceTracker **p_resource_tr
 
 		resource_tracker->reset_if_outdated(tracking_frame);
 
+		resource_tracker->command_index = p_command_index;
+		resource_tracker->usage_index = i;
+	}
+
+	for (uint32_t i = 0; i < p_resource_count; i++) {
+		ResourceTracker *resource_tracker = p_resource_trackers[i];
+
 		const RDD::TextureSubresourceRange &subresources = resource_tracker->texture_subresources;
 		const Rect2i resource_tracker_rect(subresources.base_mipmap, subresources.base_layer, subresources.mipmap_count, subresources.layer_count);
 		Rect2i search_tracker_rect = resource_tracker_rect;
@@ -417,6 +424,15 @@ void RenderingDeviceGraph::_add_command_to_graph(ResourceTracker **p_resource_tr
 		if (is_resource_a_slice) {
 			// This resource depends on a parent resource.
 			resource_tracker->parent->reset_if_outdated(tracking_frame);
+
+			// Quit early if the parent is already in this command.
+			if (resource_tracker->parent->command_index == p_command_index) {
+				DEV_ASSERT(resource_tracker->parent->usage_index != UINT32_MAX);
+
+				ERR_FAIL_COND_MSG(p_resource_usages[resource_tracker->parent->usage_index] != new_resource_usage, "Using a full texture and its slices at the same time with different usages is not allowed.");
+
+				continue;
+			}
 
 			if (resource_tracker->texture_slice_command_index != p_command_index) {
 				// Indicate this slice has been used by this command.
@@ -1055,6 +1071,8 @@ void RenderingDeviceGraph::_add_draw_list_begin(FramebufferCache *p_framebuffer_
 #if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
 	draw_instruction_list.breadcrumb = p_breadcrumb;
 #endif
+
+	workarounds_state.bound_any_draw_list_pipeline = false;
 }
 
 void RenderingDeviceGraph::_run_secondary_command_buffer_task(const SecondaryCommandBuffer *p_secondary) {
@@ -2148,6 +2166,8 @@ void RenderingDeviceGraph::add_draw_list_bind_pipeline(RDD::PipelineID p_pipelin
 	instruction->type = DrawListInstruction::TYPE_BIND_PIPELINE;
 	instruction->pipeline = p_pipeline;
 	draw_instruction_list.stages = draw_instruction_list.stages | p_pipeline_stage_bits;
+
+	workarounds_state.bound_any_draw_list_pipeline = true;
 }
 
 void RenderingDeviceGraph::add_draw_list_bind_uniform_set(RDD::ShaderID p_shader, RDD::UniformSetID p_uniform_set, uint32_t set_index) {
@@ -2345,6 +2365,11 @@ void RenderingDeviceGraph::add_draw_list_end() {
 	command->clear_values_count = draw_instruction_list.attachment_clear_values.size();
 	command->trackers_count = trackers_count;
 
+	RDD::AttachmentStoreOp attachment_store_op_dont_care = RDD::ATTACHMENT_STORE_OP_DONT_CARE;
+	if (driver_workarounds.avoid_store_op_dont_care_in_draw_list_with_no_bound_pipeline && !workarounds_state.bound_any_draw_list_pipeline) {
+		attachment_store_op_dont_care = RDD::ATTACHMENT_STORE_OP_STORE;
+	}
+
 	// Initialize the load and store operations to their default behaviors. The store behavior will be modified if a command depends on the result of this render pass.
 	uint32_t attachment_op_count = draw_instruction_list.attachment_operations.size();
 	ResourceTracker **trackers = command->trackers();
@@ -2367,7 +2392,7 @@ void RenderingDeviceGraph::add_draw_list_end() {
 				load_ops[i] = RDD::ATTACHMENT_LOAD_OP_LOAD;
 			}
 
-			store_ops[i] = resource_tracker->is_discardable ? RDD::ATTACHMENT_STORE_OP_DONT_CARE : RDD::ATTACHMENT_STORE_OP_STORE;
+			store_ops[i] = resource_tracker->is_discardable ? attachment_store_op_dont_care : RDD::ATTACHMENT_STORE_OP_STORE;
 		} else {
 			load_ops[i] = RDD::ATTACHMENT_LOAD_OP_DONT_CARE;
 			store_ops[i] = RDD::ATTACHMENT_STORE_OP_DONT_CARE;

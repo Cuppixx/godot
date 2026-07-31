@@ -1030,6 +1030,7 @@ else:  # GCC, Clang
 
     if env["werror"]:
         env.AppendUnique(CCFLAGS=["-Werror"])
+        env.AppendUnique(LINKFLAGS=["-Wl,--fatal-warnings" if env["platform"] != "macos" else "-Wl,-fatal_warnings"])
 
 if hasattr(detect, "get_program_suffix"):
     suffix = "." + detect.get_program_suffix()
@@ -1147,7 +1148,7 @@ methods.sort_module_list(env)
 
 if env.editor_build:
     # Add editor-specific dependencies to the dependency graph.
-    env.module_add_dependencies("editor", ["freetype", "regex", "svg"])
+    env.module_add_dependencies("editor", ["freetype", "svg"])
 
     # And check if they are met.
     if not env.module_check_dependencies("editor"):

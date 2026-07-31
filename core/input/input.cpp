@@ -806,13 +806,13 @@ Vector2 Input::get_joy_touchpad_finger_position(int p_device, int p_finger, int 
 	_THREAD_SAFE_METHOD_
 	const TouchpadInfo *touch = joy_touch.getptr(p_device);
 	if (touch == nullptr) {
-		return Vector2();
+		return Vector2(-1, -1);
 	}
 
 	uint16_t index = p_finger | (p_touchpad << 8);
 	const TouchpadFingerInfo *finger_info = touch->finger_info.getptr(index);
 	if (finger_info == nullptr) {
-		return Vector2();
+		return Vector2(-1, -1);
 	}
 
 	return finger_info->position;
@@ -822,13 +822,13 @@ float Input::get_joy_touchpad_finger_pressure(int p_device, int p_finger, int p_
 	_THREAD_SAFE_METHOD_
 	const TouchpadInfo *touch = joy_touch.getptr(p_device);
 	if (touch == nullptr) {
-		return 0.0f;
+		return -1.0f;
 	}
 
 	uint16_t index = p_finger | (p_touchpad << 8);
 	const TouchpadFingerInfo *finger_info = touch->finger_info.getptr(index);
 	if (finger_info == nullptr) {
-		return 0.0f;
+		return -1.0f;
 	}
 
 	return finger_info->pressure;
@@ -1888,7 +1888,7 @@ void Input::joy_motion_sensors(int p_device, const Vector3 &p_accelerometer, con
 	motion->gamepad_motion->ProcessMotion(gyro_degrees.x, gyro_degrees.y, gyro_degrees.z, accel_g.x, accel_g.y, accel_g.z, delta_time);
 }
 
-void Input::joy_touchpad(int p_device, int p_touchpad, int p_finger, const Vector2 &p_position, float p_pressure) {
+void Input::joy_touchpad(int p_device, int p_touchpad, int p_finger, const Vector2 &p_position, float p_pressure, bool p_pressed) {
 	_THREAD_SAFE_METHOD_
 
 	if (_should_ignore_joypad_events()) {
@@ -1897,7 +1897,7 @@ void Input::joy_touchpad(int p_device, int p_touchpad, int p_finger, const Vecto
 
 	TouchpadInfo &touch = joy_touch[p_device];
 	uint16_t index = p_finger | (p_touchpad << 8);
-	if (p_pressure > 0.0) {
+	if (p_pressed) {
 		touch.finger_info[index] = TouchpadFingerInfo{ p_position, p_pressure };
 	} else {
 		touch.finger_info.erase(index);
@@ -1973,11 +1973,11 @@ void Input::_update_joypad_features(int p_device) {
 	}
 }
 
-Input::JoyEvent Input::_get_mapped_button_event(const JoyDeviceMapping &mapping, JoyButton p_button) {
+Input::JoyEvent Input::_get_mapped_button_event(const JoyDeviceMapping &p_mapping, JoyButton p_button) {
 	JoyEvent event;
 
-	for (int i = 0; i < mapping.bindings.size(); i++) {
-		const JoyBinding binding = mapping.bindings[i];
+	for (int i = 0; i < p_mapping.bindings.size(); i++) {
+		const JoyBinding binding = p_mapping.bindings[i];
 		if (binding.inputType == TYPE_BUTTON && binding.input.button == p_button) {
 			event.type = binding.outputType;
 			switch (binding.outputType) {
@@ -2008,11 +2008,11 @@ Input::JoyEvent Input::_get_mapped_button_event(const JoyDeviceMapping &mapping,
 	return event;
 }
 
-Input::JoyEvent Input::_get_mapped_axis_event(const JoyDeviceMapping &mapping, JoyAxis p_axis, float p_value, JoyAxisRange &r_range) {
+Input::JoyEvent Input::_get_mapped_axis_event(const JoyDeviceMapping &p_mapping, JoyAxis p_axis, float p_value, JoyAxisRange &r_range) {
 	JoyEvent event;
 
-	for (int i = 0; i < mapping.bindings.size(); i++) {
-		const JoyBinding binding = mapping.bindings[i];
+	for (int i = 0; i < p_mapping.bindings.size(); i++) {
+		const JoyBinding binding = p_mapping.bindings[i];
 		if (binding.inputType == TYPE_AXIS && binding.input.axis.axis == p_axis) {
 			float value = p_value;
 			if (binding.input.axis.invert) {
@@ -2078,9 +2078,9 @@ Input::JoyEvent Input::_get_mapped_axis_event(const JoyDeviceMapping &mapping, J
 	return event;
 }
 
-void Input::_get_mapped_hat_events(const JoyDeviceMapping &mapping, HatDir p_hat, JoyEvent r_events[(size_t)HatDir::MAX]) {
-	for (int i = 0; i < mapping.bindings.size(); i++) {
-		const JoyBinding binding = mapping.bindings[i];
+void Input::_get_mapped_hat_events(const JoyDeviceMapping &p_mapping, HatDir p_hat, JoyEvent r_events[(size_t)HatDir::MAX]) {
+	for (int i = 0; i < p_mapping.bindings.size(); i++) {
+		const JoyBinding binding = p_mapping.bindings[i];
 		if (binding.inputType == TYPE_HAT && binding.input.hat.hat == p_hat) {
 			HatDir hat_direction;
 			switch (binding.input.hat.hat_mask) {
@@ -2129,18 +2129,18 @@ void Input::_get_mapped_hat_events(const JoyDeviceMapping &mapping, HatDir p_hat
 	}
 }
 
-JoyButton Input::_get_output_button(const String &output) {
+JoyButton Input::_get_output_button(const String &p_output) {
 	for (int i = 0; i < (int)JoyButton::SDL_MAX; i++) {
-		if (output == _joy_buttons[i]) {
+		if (p_output == _joy_buttons[i]) {
 			return JoyButton(i);
 		}
 	}
 	return JoyButton::INVALID;
 }
 
-JoyAxis Input::_get_output_axis(const String &output) {
+JoyAxis Input::_get_output_axis(const String &p_output) {
 	for (int i = 0; i < (int)JoyAxis::SDL_MAX; i++) {
-		if (output == _joy_axes[i]) {
+		if (p_output == _joy_axes[i]) {
 			return JoyAxis(i);
 		}
 	}

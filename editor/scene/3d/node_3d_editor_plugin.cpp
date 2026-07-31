@@ -105,6 +105,7 @@
 #include "scene/resources/3d/sky_material.h"
 #include "scene/resources/sky.h"
 #include "scene/resources/surface_tool.h"
+#include "servers/physics_3d/physics_server_3d_types.h"
 #include "servers/rendering/rendering_server.h"
 
 using namespace Node3DEditorConstants;
@@ -2223,7 +2224,7 @@ void Node3DEditor::_snap_selected_nodes_to_floor() {
 	}
 
 	PhysicsDirectSpaceState3D *ss = get_tree()->get_root()->get_world_3d()->get_direct_space_state();
-	PhysicsDirectSpaceState3D::RayResult result;
+	PS3DT::RayResult result;
 
 	// The maximum height an object can travel to be snapped
 	const float max_snap_height = 500.0;
@@ -2242,7 +2243,7 @@ void Node3DEditor::_snap_selected_nodes_to_floor() {
 			Vector3 to = from - Vector3(0.0, max_snap_height, 0.0);
 			HashSet<RID> excluded = _get_physics_bodies_rid(sp);
 
-			PhysicsDirectSpaceState3D::RayParameters ray_params;
+			PS3DT::RayParameters ray_params;
 			ray_params.from = from;
 			ray_params.to = to;
 			ray_params.exclude = excluded;
@@ -2265,7 +2266,7 @@ void Node3DEditor::_snap_selected_nodes_to_floor() {
 				Vector3 to = from - Vector3(0.0, max_snap_height, 0.0);
 				HashSet<RID> excluded = _get_physics_bodies_rid(sp);
 
-				PhysicsDirectSpaceState3D::RayParameters ray_params;
+				PS3DT::RayParameters ray_params;
 				ray_params.from = from;
 				ray_params.to = to;
 				ray_params.exclude = excluded;
@@ -2416,14 +2417,14 @@ void Node3DEditor::_update_theme() {
 void Node3DEditor::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_TRANSLATION_CHANGED: {
-			const String show_list_tooltip = TTR("Alt+RMB: Show list of all nodes at position clicked, including locked.");
+			const String show_list_tooltip = vformat(TTR("%s+RMB: Show list of all nodes at position clicked, including locked."), keycode_get_string((Key)KeyModifierMask::ALT));
 			tool_button[TOOL_MODE_TRANSFORM]->set_tooltip_text(vformat(TTR("%s+Drag: Rotate selected node around pivot."), keycode_get_string((Key)KeyModifierMask::CMD_OR_CTRL)) + "\n" + show_list_tooltip);
 			tool_button[TOOL_MODE_MOVE]->set_tooltip_text(vformat(TTR("%s+Drag: Use snap."), keycode_get_string((Key)KeyModifierMask::CMD_OR_CTRL)) + "\n" + show_list_tooltip);
 			tool_button[TOOL_MODE_ROTATE]->set_tooltip_text(vformat(TTR("%s+Drag: Use snap."), keycode_get_string((Key)KeyModifierMask::CMD_OR_CTRL)) + "\n" + show_list_tooltip);
 			tool_button[TOOL_MODE_SCALE]->set_tooltip_text(vformat(TTR("%s+Drag: Use snap."), keycode_get_string((Key)KeyModifierMask::CMD_OR_CTRL)) + "\n" + show_list_tooltip);
 			tool_button[TOOL_MODE_SELECT]->set_tooltip_text(show_list_tooltip);
 			tool_button[TOOL_MODE_LIST_SELECT]->set_tooltip_text(TTR("Show list of selectable nodes at position clicked.") + "\n" + show_list_tooltip);
-			tool_button[TOOL_RULER]->set_tooltip_text(TTR("LMB+Drag: Measure the distance between two points in 3D space.") + "\n" + show_list_tooltip);
+			tool_button[TOOL_RULER]->set_tooltip_text(TTR("LMB+Drag: Measure the distance between two points in 3D space.") + "\n" + TTR("Shift+LMB+Drag: Show component measurements.") + "\n" + show_list_tooltip);
 			_update_gizmos_menu();
 			_update_vertex_snap_tooltips();
 		} break;
@@ -2455,6 +2456,14 @@ void Node3DEditor::_notification(int p_what) {
 
 		case NOTIFICATION_EXIT_TREE: {
 			_finish_indicators();
+		} break;
+
+		case NOTIFICATION_PROCESS: {
+			if (gizmo_bvh_needs_optimization) {
+				// Only call this once per frame and only call when dirty. This is very expensive.
+				gizmo_bvh.optimize_incremental(1);
+				gizmo_bvh_needs_optimization = false;
+			}
 		} break;
 
 		case NOTIFICATION_THEME_CHANGED: {
@@ -2842,17 +2851,12 @@ void Node3DEditor::_register_all_gizmos() {
 	add_gizmo_plugin(Ref<AudioListener3DGizmoPlugin>(memnew(AudioListener3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<MeshInstance3DGizmoPlugin>(memnew(MeshInstance3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<OccluderInstance3DGizmoPlugin>(memnew(OccluderInstance3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<SoftBody3DGizmoPlugin>(memnew(SoftBody3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<SpriteBase3DGizmoPlugin>(memnew(SpriteBase3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<Label3DGizmoPlugin>(memnew(Label3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<GeometryInstance3DGizmoPlugin>(memnew(GeometryInstance3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<Marker3DGizmoPlugin>(memnew(Marker3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<RayCast3DGizmoPlugin>(memnew(RayCast3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<ShapeCast3DGizmoPlugin>(memnew(ShapeCast3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<SpringArm3DGizmoPlugin>(memnew(SpringArm3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<SpringBoneCollision3DGizmoPlugin>(memnew(SpringBoneCollision3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<SpringBoneSimulator3DGizmoPlugin>(memnew(SpringBoneSimulator3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<VehicleWheel3DGizmoPlugin>(memnew(VehicleWheel3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<VisibleOnScreenNotifier3DGizmoPlugin>(memnew(VisibleOnScreenNotifier3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<GPUParticles3DGizmoPlugin>(memnew(GPUParticles3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<GPUParticlesCollision3DGizmoPlugin>(memnew(GPUParticlesCollision3DGizmoPlugin)));
@@ -2863,14 +2867,20 @@ void Node3DEditor::_register_all_gizmos() {
 	add_gizmo_plugin(Ref<VoxelGIGizmoPlugin>(memnew(VoxelGIGizmoPlugin)));
 	add_gizmo_plugin(Ref<LightmapGIGizmoPlugin>(memnew(LightmapGIGizmoPlugin)));
 	add_gizmo_plugin(Ref<LightmapProbeGizmoPlugin>(memnew(LightmapProbeGizmoPlugin)));
+	add_gizmo_plugin(Ref<FogVolumeGizmoPlugin>(memnew(FogVolumeGizmoPlugin)));
+	add_gizmo_plugin(Ref<TwoBoneIK3DGizmoPlugin>(memnew(TwoBoneIK3DGizmoPlugin)));
+	add_gizmo_plugin(Ref<ChainIK3DGizmoPlugin>(memnew(ChainIK3DGizmoPlugin)));
+	// Physics gizmo plugins.
 	add_gizmo_plugin(Ref<CollisionObject3DGizmoPlugin>(memnew(CollisionObject3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<CollisionShape3DGizmoPlugin>(memnew(CollisionShape3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<CollisionPolygon3DGizmoPlugin>(memnew(CollisionPolygon3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<Joint3DGizmoPlugin>(memnew(Joint3DGizmoPlugin)));
+	add_gizmo_plugin(Ref<SoftBody3DGizmoPlugin>(memnew(SoftBody3DGizmoPlugin)));
+	add_gizmo_plugin(Ref<ShapeCast3DGizmoPlugin>(memnew(ShapeCast3DGizmoPlugin)));
+	add_gizmo_plugin(Ref<SpringArm3DGizmoPlugin>(memnew(SpringArm3DGizmoPlugin)));
 	add_gizmo_plugin(Ref<PhysicalBone3DGizmoPlugin>(memnew(PhysicalBone3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<FogVolumeGizmoPlugin>(memnew(FogVolumeGizmoPlugin)));
-	add_gizmo_plugin(Ref<TwoBoneIK3DGizmoPlugin>(memnew(TwoBoneIK3DGizmoPlugin)));
-	add_gizmo_plugin(Ref<ChainIK3DGizmoPlugin>(memnew(ChainIK3DGizmoPlugin)));
+	add_gizmo_plugin(Ref<VehicleWheel3DGizmoPlugin>(memnew(VehicleWheel3DGizmoPlugin)));
+	add_gizmo_plugin(Ref<RayCast3DGizmoPlugin>(memnew(RayCast3DGizmoPlugin)));
 }
 
 void Node3DEditor::_bind_methods() {
@@ -2885,7 +2895,7 @@ void Node3DEditor::_bind_methods() {
 	ClassDB::bind_method("update_all_gizmos", &Node3DEditor::update_all_gizmos);
 	ClassDB::bind_method("update_transform_gizmo", &Node3DEditor::update_transform_gizmo);
 
-	ADD_SIGNAL(MethodInfo("transform_key_request"));
+	ADD_SIGNAL(MethodInfo("transform_3d_key_request"));
 	ADD_SIGNAL(MethodInfo("item_lock_status_changed"));
 	ADD_SIGNAL(MethodInfo("item_group_status_changed"));
 }
@@ -3242,8 +3252,6 @@ Node3DEditor::Node3DEditor() {
 	HBoxContainer *main_menu_hbox = memnew(HBoxContainer);
 	main_flow->add_child(main_menu_hbox);
 
-	String sct;
-
 	tool_button[TOOL_MODE_TRANSFORM] = memnew(Button);
 	main_menu_hbox->add_child(tool_button[TOOL_MODE_TRANSFORM]);
 	tool_button[TOOL_MODE_TRANSFORM]->set_toggle_mode(true);
@@ -3302,7 +3310,7 @@ Node3DEditor::Node3DEditor() {
 	tool_button[TOOL_MODE_LIST_SELECT]->set_toggle_mode(true);
 	tool_button[TOOL_MODE_LIST_SELECT]->set_theme_type_variation(SceneStringName(FlatButton));
 	tool_button[TOOL_MODE_LIST_SELECT]->connect(SceneStringName(pressed), callable_mp(this, &Node3DEditor::_menu_item_pressed).bind(MENU_TOOL_LIST_SELECT));
-	tool_button[TOOL_MODE_LIST_SELECT]->set_tooltip_text(TTR("Show list of selectable nodes at position clicked.") + "\n" + TTR("Alt+RMB: Show list of all nodes at position clicked, including locked."));
+	tool_button[TOOL_MODE_LIST_SELECT]->set_tooltip_text(TTR("Show list of selectable nodes at position clicked.") + "\n" + vformat(TTR("%s+RMB: Show list of all nodes at position clicked, including locked."), keycode_get_string((Key)KeyModifierMask::ALT)));
 	tool_button[TOOL_MODE_LIST_SELECT]->set_accessibility_name(TTRC("Show List of Selectable Nodes"));
 
 	tool_button[TOOL_LOCK_SELECTED] = memnew(Button);
@@ -3346,7 +3354,6 @@ Node3DEditor::Node3DEditor() {
 	tool_button[TOOL_RULER]->set_toggle_mode(true);
 	tool_button[TOOL_RULER]->set_theme_type_variation("FlatButton");
 	tool_button[TOOL_RULER]->connect(SceneStringName(pressed), callable_mp(this, &Node3DEditor::_menu_item_pressed).bind(MENU_RULER));
-	tool_button[TOOL_RULER]->set_tooltip_text(TTRC("LMB+Drag: Measure distance between two points.\nShift+LMB+Drag: Show component measurements."));
 	// Define the shortcut globally (without a context) so that it works if the Scene tree dock is currently focused.
 	tool_button[TOOL_RULER]->set_shortcut(ED_SHORTCUT("spatial_editor/measure", TTRC("Ruler Mode"), Key::M));
 	tool_button[TOOL_RULER]->set_accessibility_name(TTRC("Ruler Mode"));
@@ -4080,7 +4087,7 @@ DynamicBVH::ID Node3DEditor::insert_gizmo_bvh_node(Node3D *p_node, const AABB &p
 
 void Node3DEditor::update_gizmo_bvh_node(DynamicBVH::ID p_id, const AABB &p_aabb) {
 	gizmo_bvh.update(p_id, p_aabb);
-	gizmo_bvh.optimize_incremental(1);
+	gizmo_bvh_needs_optimization = true;
 }
 
 void Node3DEditor::remove_gizmo_bvh_node(DynamicBVH::ID p_id) {

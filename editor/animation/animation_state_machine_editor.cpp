@@ -740,9 +740,6 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 				bool is_start_closer = dist_to_start < dist_to_end;
 
 				if ((near_start || near_end) && d < closest_d_highlight) {
-					StringName from_node = transition_lines[i].from_node;
-					StringName to_node = transition_lines[i].to_node;
-
 					bool is_start_endpoint = near_start && (is_start_closer || !near_end);
 					closest_d_highlight = d;
 					closest_for_highlight = i;
@@ -827,7 +824,7 @@ void AnimationNodeStateMachineEditor::_open_menu(const Vector2 &p_position) {
 	LocalVector<StringName> animation_names = tree->get_sorted_animation_list();
 	menu->add_submenu_node_item(TTR("Add Animation"), animations_menu);
 	if (animation_names.is_empty()) {
-		menu->set_item_disabled(menu->get_item_idx_from_text(TTR("Add Animation")), true);
+		menu->set_item_disabled(-1, true);
 	} else {
 		for (const StringName &name : animation_names) {
 			animations_menu->add_icon_item(theme_cache.animation_icon, name);
@@ -863,8 +860,6 @@ void AnimationNodeStateMachineEditor::_open_menu(const Vector2 &p_position) {
 }
 
 bool AnimationNodeStateMachineEditor::_create_submenu(PopupMenu *p_menu, Ref<AnimationNodeStateMachine> p_nodesm, const StringName &p_name, const StringName &p_path) {
-	String prev_path;
-
 	LocalVector<StringName> nodes = p_nodesm->get_node_list();
 
 	PopupMenu *nodes_menu = memnew(PopupMenu);

@@ -250,6 +250,13 @@ Variant GDScriptLanguageProtocol::initialize(const Dictionary &p_params) {
 	client->behavior.use_snippets_for_brace_completion = get_deep(capabilities, false,
 			"textDocument", "completion", "completionItem", "snippetSupport");
 
+	Array allowed_tags = get_deep(capabilities, Array(), "general", "markdown", "allowedTags");
+	for (const Variant &tag : allowed_tags) {
+		if (tag.is_string()) {
+			client->behavior.markdown_allowed_html_tags.insert(tag);
+		}
+	}
+
 	return ret.to_json();
 }
 
@@ -349,7 +356,7 @@ void GDScriptLanguageProtocol::notify_client(const String &p_method, const Varia
 	peer->res_queue.push_back(msg.utf8());
 }
 
-void GDScriptLanguageProtocol::request_client(const String &p_method, const Variant &p_params, int p_client_id) {
+void GDScriptLanguageProtocol::request_client(const String &p_method, const Variant &p_params, int p_client_id, const Callable &p_response_handler) {
 #ifdef TESTS_ENABLED
 	if (clients.is_empty()) {
 		return;
@@ -364,6 +371,7 @@ void GDScriptLanguageProtocol::request_client(const String &p_method, const Vari
 	ERR_FAIL_COND(peer.is_null());
 
 	Dictionary message = make_request(p_method, p_params, next_server_id);
+	set_response_handler(next_client_id, p_response_handler);
 	next_server_id++;
 	String msg = Variant(message).to_json_string();
 	msg = format_output(msg);
@@ -438,6 +446,12 @@ ExtendGDScriptParser *GDScriptLanguageProtocol::get_parse_result(const String &p
 		return client->parse_script(p_path);
 	}
 	return *cached_parser;
+}
+
+const HashSet<String> &GDScriptLanguageProtocol::get_client_markdown_allowed_html_tags() const {
+	static const HashSet<String> default_tags = {};
+	LSP_CLIENT_V(default_tags);
+	return client->behavior.markdown_allowed_html_tags;
 }
 
 void GDScriptLanguageProtocol::lsp_did_open(const Dictionary &p_params) {
@@ -661,10 +675,7 @@ GDScriptLanguageProtocol::GDScriptLanguageProtocol() {
 	SET_DOCUMENT_METHOD(rename);
 	SET_DOCUMENT_METHOD(prepareRename);
 	SET_DOCUMENT_METHOD(references);
-	SET_DOCUMENT_METHOD(foldingRange);
-	SET_DOCUMENT_METHOD(codeLens);
 	SET_DOCUMENT_METHOD(documentLink);
-	SET_DOCUMENT_METHOD(colorPresentation);
 	SET_DOCUMENT_METHOD(hover);
 	SET_DOCUMENT_METHOD(definition);
 	SET_DOCUMENT_METHOD(declaration);

@@ -195,6 +195,11 @@ void EditorDockManager::_update_layout() {
 	EditorNode::get_singleton()->save_editor_layout_delayed();
 }
 
+DockTabContainer *EditorDockManager::get_dock_container(int p_slot) const {
+	ERR_FAIL_INDEX_V(p_slot, EditorDock::DOCK_SLOT_MAX, nullptr);
+	return dock_slots[p_slot];
+}
+
 void EditorDockManager::update_docks_menu() {
 	docks_menu->clear();
 	docks_menu->reset_size();
@@ -289,7 +294,7 @@ void EditorDockManager::_open_dock_in_window(EditorDock *p_dock, bool p_show_win
 	EditorNode::get_singleton()->get_gui_base()->add_child(wrapper);
 
 	_move_dock(p_dock, nullptr);
-	p_dock->update_layout(EditorDock::DOCK_LAYOUT_FLOATING);
+	p_dock->update_layout(EditorDock::DOCK_LAYOUT_FLOATING, EditorDock::DOCK_SLOT_NONE);
 	p_dock->current_layout = EditorDock::DOCK_LAYOUT_FLOATING;
 	wrapper->set_wrapped_control(p_dock);
 
@@ -369,11 +374,9 @@ void EditorDockManager::_move_dock(EditorDock *p_dock, Control *p_target, int p_
 	p_dock->hide();
 
 	DockTabContainer *dock_tab_container = Object::cast_to<DockTabContainer>(p_target);
-	if (p_target != closed_dock_parent) {
-		if (dock_tab_container->layout != p_dock->current_layout) {
-			p_dock->update_layout(dock_tab_container->layout);
-			p_dock->current_layout = dock_tab_container->layout;
-		}
+	if (dock_tab_container && p_target != closed_dock_parent && (dock_tab_container->layout != p_dock->current_layout || dock_tab_container->dock_slot != p_dock->dock_slot_index)) {
+		p_dock->update_layout(dock_tab_container->layout, dock_tab_container->dock_slot);
+		p_dock->current_layout = dock_tab_container->layout;
 		p_dock->dock_slot_index = dock_tab_container->dock_slot;
 	}
 
@@ -799,23 +802,13 @@ void EditorDockManager::set_tab_icon_max_width(int p_max_width) {
 	}
 }
 
+void EditorDockManager::_register_split(DockSplitContainer **p_var, DockSplitContainer *p_split) {
+	*p_var = p_split;
+	p_split->connect("dragged", callable_mp(this, &EditorDockManager::_dock_split_dragged));
+}
+
 void EditorDockManager::add_vsplit(DockSplitContainer *p_split) {
 	vsplits.push_back(p_split);
-	p_split->connect("dragged", callable_mp(this, &EditorDockManager::_dock_split_dragged));
-}
-
-void EditorDockManager::set_main_vsplit(DockSplitContainer *p_split) {
-	main_vsplit = p_split;
-	p_split->connect("dragged", callable_mp(this, &EditorDockManager::_dock_split_dragged));
-}
-
-void EditorDockManager::set_main_hsplit(DockSplitContainer *p_split) {
-	main_hsplit = p_split;
-	p_split->connect("dragged", callable_mp(this, &EditorDockManager::_dock_split_dragged));
-}
-
-void EditorDockManager::set_bottom_hsplit(DockSplitContainer *p_split) {
-	bottom_hsplit = p_split;
 	p_split->connect("dragged", callable_mp(this, &EditorDockManager::_dock_split_dragged));
 }
 
@@ -943,7 +936,7 @@ void DockContextPopup::_update_buttons() {
 	// Update tab move buttons.
 	tab_move_left_button->set_disabled(true);
 	tab_move_right_button->set_disabled(true);
-	TabContainer *context_tab_container = context_dock->get_parent_container();
+	DockTabContainer *context_tab_container = context_dock->get_parent_container();
 	if (context_tab_container && context_tab_container->get_tab_count() > 0) {
 		int context_tab_index = context_tab_container->get_tab_idx_from_control(context_dock);
 		tab_move_left_button->set_disabled(context_tab_index == 0);

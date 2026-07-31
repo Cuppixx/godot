@@ -160,6 +160,7 @@ private:
 	bool checked = false;
 	bool draw_warning = false;
 	bool draw_prop_warning = false;
+	bool is_deprecated = false;
 	bool keying = false;
 	bool deletable = false;
 	bool label_overlayed = false;
@@ -191,7 +192,7 @@ private:
 
 	void _update_popup();
 	void _focusable_focused(int p_index);
-	int _get_v_separation() const { return bottom_editor ? 0 : theme_cache.vertical_separation; }
+	int _get_v_separation() const { return bottom_editor && bottom_editor_seperation ? theme_cache.vertical_separation : 0; }
 
 	bool selectable = true;
 	bool selected = false;
@@ -218,6 +219,7 @@ private:
 protected:
 	bool has_borders = false;
 	bool can_override = false;
+	bool bottom_editor_seperation = false;
 
 	void _notification(int p_what);
 	static void _bind_methods();
@@ -266,6 +268,7 @@ public:
 	void set_doc_path(const String &p_doc_path);
 	void set_internal(bool p_internal);
 
+	virtual void make_passthrough(bool p_passthrough);
 	virtual void update_property();
 	void update_editor_property_status();
 
@@ -285,6 +288,8 @@ public:
 
 	virtual bool is_colored(ColorationMode p_mode) { return false; }
 
+	int get_sub_inspector_color_level() { return sub_inspector_color_level; }
+
 	void set_deletable(bool p_enable);
 	bool is_deletable() const;
 	void add_focusable(Control *p_control);
@@ -295,10 +300,12 @@ public:
 
 	void add_inline_control(Control *p_control, InlineControlSide p_side);
 	HBoxContainer *get_inline_container(InlineControlSide p_side);
-	void set_label_overlayed(bool p_overlay);
 
+	void set_label_overlayed(bool p_overlay);
 	void set_label_reference(Control *p_control);
+
 	void set_bottom_editor(Control *p_control);
+	Control *get_bottom_editor() const { return bottom_editor; }
 
 	void set_use_folding(bool p_use_folding);
 	bool is_using_folding() const;
@@ -407,6 +414,8 @@ class EditorInspectorCategory : public Control {
 		Ref<Texture2D> icon_help;
 
 		Ref<StyleBox> background;
+		Ref<StyleBox> sub_inspector_background;
+		Ref<StyleBox> sub_inspector_color_background[17];
 	} theme_cache;
 
 	PropertyInfo info;
@@ -417,6 +426,7 @@ class EditorInspectorCategory : public Control {
 	PopupMenu *menu = nullptr;
 	bool is_favorite = false;
 	bool menu_icon_dirty = true;
+	int color_level = -1;
 
 	LocalVector<EditorProperty *> category_properties;
 
@@ -437,6 +447,7 @@ public:
 	void set_as_favorite();
 	void set_property_info(const PropertyInfo &p_info);
 	void set_doc_class_name(const String &p_name);
+	void set_color_level(int p_color_level);
 
 	void register_property(EditorProperty *p_property) { category_properties.push_back(p_property); }
 
@@ -454,6 +465,11 @@ class EditorInspectorSection : public Container {
 	enum MenuItems {
 		MENU_COPY_VALUE,
 		MENU_PASTE_VALUE,
+		MENU_COPY_PROPERTY_PATH,
+		MENU_COPY_SECTION,
+		MENU_PASTE_SECTION,
+		MENU_REVERT_VALUE,
+		MENU_OPEN_DOCUMENTATION,
 	};
 
 	String label;
@@ -480,6 +496,8 @@ class EditorInspectorSection : public Container {
 	bool header_hover = false;
 
 	bool checkbox_only = false;
+
+	String doc_path;
 
 	PopupMenu *menu = nullptr;
 
@@ -527,6 +545,8 @@ class EditorInspectorSection : public Container {
 		Ref<Texture2D> icon_gui_animation_key;
 		Ref<Texture2D> icon_copy;
 		Ref<Texture2D> icon_paste;
+		Ref<Texture2D> icon_copy_path;
+		Ref<Texture2D> help_icon;
 
 		Ref<StyleBoxFlat> indent_box;
 		Ref<StyleBoxFlat> icon_hover;
@@ -558,6 +578,7 @@ public:
 	void set_checkable(const String &p_related_check_property, bool p_checkbox_only, bool p_checked);
 	inline bool is_checkable() const { return checkable; }
 	void set_checked(bool p_checked);
+	void set_doc_path(const String &p_doc_path);
 	void set_keying(bool p_keying);
 
 	bool has_revertable_properties() const;
@@ -566,7 +587,7 @@ public:
 	void update_property();
 
 	void _update_popup();
-	void menu_option(int p_option) const;
+	void menu_option(int p_option);
 
 	void register_property(EditorProperty *p_property) { section_properties.push_back(p_property); }
 
@@ -763,6 +784,7 @@ private:
 	bool can_favorite = false;
 	PackedStringArray current_favorites;
 	VBoxContainer *favorites_section = nullptr;
+	EditorInspectorCategory *favorites_category = nullptr;
 	VBoxContainer *favorites_vbox = nullptr;
 	VBoxContainer *favorites_groups_vbox = nullptr;
 	HSeparator *favorites_separator = nullptr;
@@ -787,6 +809,7 @@ private:
 	LineEdit *search_box = nullptr;
 	bool show_standard_categories = false;
 	bool show_custom_categories = false;
+	int category_color_level = -1;
 	bool hide_script = true;
 	bool hide_metadata = true;
 	bool use_doc_hints = false;
@@ -860,6 +883,13 @@ private:
 
 	void _keying_changed();
 
+	void _populate_property_map(EditorProperty *p_ep, const PropertyInfo &p_property_info, const EditorInspectorPlugin::AddedEditor &p_editor, const Vector<String> &p_properties, const String &p_property_label_string);
+	void _apply_property_editor_flags(EditorProperty *p_ep, bool p_sub_inspector_use_filter, bool p_disable_favorite, bool p_property_read_only, bool p_all_read_only, bool p_checkable, bool p_checked, bool p_draw_warning);
+	void _connect_property_editor_signals(EditorProperty *p_ep, bool p_update_all);
+	void _apply_property_editor_doc(EditorProperty *p_ep, const PropertyInfo &p_property_info, const String &p_doc_tooltip_text, const String &p_doc_path);
+	void _search_and_connect_sections(EditorProperty *p_ep, Node *p_section_search);
+	void _update_property_editor(EditorProperty *p_ep);
+
 	void _parse_added_editors(VBoxContainer *p_current_vbox, EditorInspectorSection *p_section, Ref<EditorInspectorPlugin> p_plugin);
 
 	void _vscroll_changed(double);
@@ -898,6 +928,9 @@ public:
 	static PropertyClipboard::Type get_property_clipboard_type() { return property_clipboard.type; }
 	static Variant get_property_clipboard_value() { return property_clipboard.value; }
 
+	static void set_property_clipboard_property_value(const Variant &p_value);
+	static Variant get_property_clipboard_property_value();
+
 	static EditorInspector *create_default_inspector(LineEdit *p_filter_line_edit = nullptr);
 
 	bool is_main_editor_inspector() const;
@@ -922,6 +955,7 @@ public:
 	void set_autoclear(bool p_enable);
 
 	void set_show_categories(bool p_show_standard, bool p_show_custom);
+	void set_category_color_level(int p_color_level);
 	void set_use_doc_hints(bool p_enable);
 	void set_hide_script(bool p_hide);
 	void set_hide_metadata(bool p_hide);

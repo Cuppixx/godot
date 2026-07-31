@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -66,6 +66,9 @@ jobs:
 
       - name: Download Swappy
         run: python ./misc/scripts/install_swappy_android.py
+
+      - name: Download Perfetto
+        run: python ./misc/scripts/install_perfetto.py
 
       - name: Compilation
         uses: ./.github/actions/godot-build
@@ -162,7 +165,7 @@ jobs:
             --app "$APP_APK" \
             --test "$TEST_APK" \
             --device model=MediumPhone.arm,version=26 \
-            --device model=starlte,version=29 \
+            --device model=java,version=30 \
             --device model=MediumPhone.arm,version=32 \
             --device model=MediumTablet.arm,version=35 \
             --device model=rango,version=36 \

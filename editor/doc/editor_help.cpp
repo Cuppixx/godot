@@ -43,6 +43,7 @@
 #include "core/object/script_language.h"
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
+#include "core/string/regex.h"
 #include "core/string/string_builder.h"
 #include "core/version.h"
 #include "editor/doc/doc_data_compressed.gen.h"
@@ -74,8 +75,6 @@
 #ifdef MODULE_MONO_ENABLED
 #include "modules/mono/csharp_script.h"
 #endif
-
-#include "modules/regex/regex.h"
 
 #define CONTRIBUTE_URL "https://contributing.godotengine.org/en/latest/documentation/class_reference.html"
 
@@ -1041,7 +1040,7 @@ void EditorHelp::_update_doc() {
 
 		String inherits = cd.inherits;
 		while (!inherits.is_empty()) {
-			_add_type_icon(inherits, theme_cache.doc_font_size, "ArrowRight");
+			_add_type_icon(inherits, theme_cache.doc_font_size, "Object");
 			class_desc->add_text(nbsp); // Otherwise icon borrows hyperlink from `_add_type()`.
 			_add_type(inherits);
 
@@ -1070,7 +1069,7 @@ void EditorHelp::_update_doc() {
 				class_desc->add_text(" , ");
 			}
 
-			_add_type_icon(itr->get(), theme_cache.doc_font_size, "ArrowRight");
+			_add_type_icon(itr->get(), theme_cache.doc_font_size, "Object");
 			class_desc->add_text(nbsp); // Otherwise icon borrows hyperlink from `_add_type()`.
 			_add_type(itr->get());
 		}
@@ -1688,18 +1687,17 @@ void EditorHelp::_update_doc() {
 		Vector<DocData::ConstantDoc> constants;
 
 		for (const DocData::ConstantDoc &constant : cd.constants) {
+			// Ignore undocumented private.
+			const bool is_documented = constant.is_deprecated || constant.is_experimental || !constant.description.strip_edges().is_empty();
+			if (!is_documented && constant.name.begins_with("_")) {
+				continue;
+			}
 			if (!constant.enumeration.is_empty()) {
 				if (!enums.has(constant.enumeration)) {
 					enums[constant.enumeration] = Vector<DocData::ConstantDoc>();
 				}
-
 				enums[constant.enumeration].push_back(constant);
 			} else {
-				// Ignore undocumented private.
-				const bool is_documented = constant.is_deprecated || constant.is_experimental || !constant.description.strip_edges().is_empty();
-				if (!is_documented && constant.name.begins_with("_")) {
-					continue;
-				}
 				constants.push_back(constant);
 			}
 		}
@@ -3737,7 +3735,7 @@ EditorHelpBit::HelpData EditorHelpBit::_get_property_help_data(const StringName 
 							if (item_descr.is_empty()) {
 								item_descr = "[color=<EditorHelpBitCommentColor>][i]" + TTR("No description available.") + "[/i][/color]";
 							}
-							current.description += vformat("\n[b]%s:[/b] %s", item_name, item_descr);
+							current.description += vformat("\n[b]%s[/b] [color=<EditorHelpBitCommentColor>]=[/color] %s[color=<EditorHelpBitCommentColor>]:[/color] %s", item_name, constant.value, item_descr);
 						}
 					}
 					current.description = current.description.lstrip("\n");
@@ -4421,6 +4419,11 @@ void EditorHelpBit::_bind_methods() {
 
 void EditorHelpBit::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_TRANSLATION_CHANGED:
+			if (!current_symbol.is_empty()) {
+				parse_symbol(current_symbol, current_prologue);
+			}
+			break;
 		case NOTIFICATION_THEME_CHANGED:
 			content->begin_bulk_theme_override();
 
@@ -4436,6 +4439,17 @@ void EditorHelpBit::_notification(int p_what) {
 			_update_labels();
 			break;
 	}
+}
+
+void EditorHelpBit::clear_cache() {
+	doc_class_cache.clear();
+	doc_enum_cache.clear();
+	doc_constant_cache.clear();
+	doc_property_cache.clear();
+	doc_theme_item_cache.clear();
+	doc_method_cache.clear();
+	doc_signal_cache.clear();
+	doc_annotation_cache.clear();
 }
 
 String EditorHelpBit::get_as_plain_text(const String &p_symbol, const String &p_prologue) {
@@ -4683,11 +4697,15 @@ void EditorHelpBit::parse_symbol(const String &p_symbol, const String &p_prologu
 		item_data = JSON::parse_string(slices[3]);
 	}
 
+	current_symbol = p_symbol;
+	current_prologue = p_prologue;
+
 	symbol_doc_link = String();
 	symbol_class_name = class_name;
 	symbol_type = String();
 	symbol_name = item_name;
 	symbol_hint = SYMBOL_HINT_NONE;
+
 	help_data = HelpData();
 
 	if (item_type == "class") {
@@ -4851,6 +4869,9 @@ void EditorHelpBit::parse_symbol(const String &p_symbol, const String &p_prologu
 }
 
 void EditorHelpBit::set_custom_text(const String &p_type, const String &p_name, const String &p_description) {
+	current_symbol = String();
+	current_prologue = String();
+
 	symbol_doc_link = String();
 	symbol_class_name = String();
 	symbol_type = p_type;
@@ -4884,7 +4905,12 @@ void EditorHelpBit::update_content_height() {
 	content->set_custom_minimum_size(Size2(content->get_custom_minimum_size().x, CLAMP(content_height, content_min_height, content_max_height)));
 }
 
-EditorHelpBit::EditorHelpBit(const String &p_symbol, const String &p_prologue, bool p_use_class_prefix, bool p_allow_selection, bool p_in_tooltip) {
+EditorHelpBit::EditorHelpBit(
+		const String &p_symbol,
+		const String &p_prologue,
+		bool p_use_class_prefix,
+		bool p_allow_selection,
+		bool p_in_tooltip) {
 	add_theme_constant_override("separation", 0);
 
 	title = memnew(RichTextLabel);
@@ -5010,7 +5036,12 @@ void EditorHelpBitTooltip::_notification(int p_what) {
 	}
 }
 
-Control *EditorHelpBitTooltip::make_tooltip(Control *p_target, const String &p_symbol, const String &p_prologue, bool p_use_class_prefix, bool p_shortcut) {
+Control *EditorHelpBitTooltip::make_tooltip(
+		Control *p_target,
+		const String &p_symbol,
+		const String &p_prologue,
+		bool p_use_class_prefix,
+		bool p_shortcut) {
 	ERR_FAIL_NULL_V(p_target, _make_invisible_control());
 
 	// Show the custom tooltip only if it is not already visible.
@@ -5201,7 +5232,7 @@ void EditorHelpHighlighter::highlight(RichTextLabel *p_rich_text_label, Language
 	}
 }
 
-void EditorHelpHighlighter::reset_cache() {
+void EditorHelpHighlighter::clear_cache() {
 	const Color text_color = EDITOR_GET("text_editor/theme/highlighting/text_color");
 
 #ifdef MODULE_GDSCRIPT_ENABLED

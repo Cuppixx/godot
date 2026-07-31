@@ -33,6 +33,7 @@
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/object/editor_language.h"
 #include "core/templates/hash_set.h"
 #include "editor/doc/editor_help.h"
 #include "editor/docks/scene_tree_dock.h"
@@ -1013,7 +1014,7 @@ void ConnectionsDock::_make_or_edit_connection() {
 
 	if (scr.is_valid() && !ClassDB::has_method(target->get_class(), cd.method)) {
 		// Check in target's own script.
-		int line = scr->get_language()->find_function(cd.method, scr->get_source_code());
+		int32_t line = scr->get_language()->get_editor_language()->find_function(cd.method, scr->get_source_code());
 		if (line != -1) {
 			add_script_function_request = EDITOR_GET("text_editor/behavior/navigation/open_script_when_connecting_signal_to_existing_method");
 		} else {
@@ -1021,7 +1022,7 @@ void ConnectionsDock::_make_or_edit_connection() {
 			bool found_inherited_function = false;
 			Ref<Script> inherited_scr = scr->get_base_script();
 			while (inherited_scr.is_valid()) {
-				int inherited_line = inherited_scr->get_language()->find_function(cd.method, inherited_scr->get_source_code());
+				int32_t inherited_line = inherited_scr->get_language()->get_editor_language()->find_function(cd.method, inherited_scr->get_source_code());
 				if (inherited_line != -1) {
 					found_inherited_function = true;
 					break;
@@ -1243,7 +1244,7 @@ void ConnectionsDock::_open_connection_dialog(TreeItem &p_item) {
 	cd.method = ConnectDialog::generate_method_callback_name(cd.source, signal_name, cd.target);
 	connect_dialog->init(cd, signal_args);
 	connect_dialog->set_title(TTR("Connect a Signal to a Method"));
-	connect_dialog->popup_dialog(signal_name.operator String() + "(" + String(", ").join(signal_args) + ")");
+	connect_dialog->popup_dialog(signal_name.string() + "(" + String(", ").join(signal_args) + ")");
 }
 
 /*
@@ -1265,7 +1266,7 @@ void ConnectionsDock::_open_edit_connection_dialog(TreeItem &p_item) {
 
 		connect_dialog->init(cd, signal_args, true);
 		connect_dialog->set_title(vformat(TTR("Edit Connection: '%s'"), cd.signal));
-		connect_dialog->popup_dialog(signal_name.operator String() + "(" + String(", ").join(signal_args) + ")");
+		connect_dialog->popup_dialog(signal_name.string() + "(" + String(", ").join(signal_args) + ")");
 	}
 }
 
@@ -1469,6 +1470,12 @@ void ConnectionsDock::_close() {
 	hide();
 }
 
+void ConnectionsDock::_changed_callback() {
+	if (selected_object != nullptr) {
+		update_tree();
+	}
+}
+
 void ConnectionsDock::_connect_pressed() {
 	TreeItem *item = tree->get_selected();
 	if (!item) {
@@ -1526,8 +1533,16 @@ void ConnectionsDock::set_object(Object *p_object) {
 		select_an_object->hide();
 		holder->show();
 	}
+	if (selected_object != nullptr && likely(Variant(selected_object).get_validated_object())) {
+		selected_object->disconnect(CoreStringName(property_list_changed), callable_mp(this, &ConnectionsDock::_changed_callback));
+	}
+
 	selected_object = p_object;
 	is_editing_resource = (Object::cast_to<Resource>(selected_object) != nullptr);
+
+	if (selected_object != nullptr) {
+		selected_object->connect(CoreStringName(property_list_changed), callable_mp(this, &ConnectionsDock::_changed_callback));
+	}
 	update_tree();
 }
 
@@ -1758,7 +1773,7 @@ ConnectionsDock::ConnectionsDock() {
 	holder->add_child(search_box);
 
 	MarginContainer *mc = memnew(MarginContainer);
-	mc->set_theme_type_variation("NoBorderHorizontal");
+	mc->set_theme_type_variation("NoBorderPanel");
 	mc->set_v_size_flags(SIZE_EXPAND_FILL);
 	holder->add_child(mc);
 

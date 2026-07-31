@@ -159,6 +159,11 @@ OS_AppleEmbedded::OS_AppleEmbedded() {
 
 OS_AppleEmbedded::~OS_AppleEmbedded() {}
 
+Error OS_AppleEmbedded::get_entropy(uint8_t *r_buffer, int p_bytes) {
+	int status = SecRandomCopyBytes(kSecRandomDefault, p_bytes, r_buffer);
+	return status == errSecSuccess ? OK : FAILED;
+}
+
 void OS_AppleEmbedded::alert(const String &p_alert, const String &p_title) {
 	const CharString utf8_alert = p_alert.utf8();
 	const CharString utf8_title = p_title.utf8();
@@ -191,14 +196,9 @@ void OS_AppleEmbedded::initialize_modules() {
 
 void OS_AppleEmbedded::deinitialize_modules() {
 #ifdef SDL_ENABLED
-	if (joypad_sdl) {
-		memdelete(joypad_sdl);
-	}
+	memdelete(joypad_sdl);
 #endif
-
-	if (apple_embedded) {
-		memdelete(apple_embedded);
-	}
+	memdelete(apple_embedded);
 }
 
 void OS_AppleEmbedded::set_main_loop(MainLoop *p_main_loop) {
@@ -519,7 +519,7 @@ static const _ModelInfo _models[] = {
 	{ { "iPad17,1", "iPad17,2", "iPad17,3", "iPad17,4", "RealityDevice17,1" }, "Apple M5" },
 	{ { "iPhone17,3", "iPhone17,4", "iPhone17,5" }, "Apple A18" },
 	{ { "iPhone17,1", "iPhone17,2" }, "Apple A18 Pro" },
-	{ { "iPhone18,3" }, "Apple A19" },
+	{ { "iPhone18,3", "iPhone18,5" }, "Apple A19" },
 	{ { "iPhone18,1", "iPhone18,2", "iPhone18,4" }, "Apple A19 Pro" },
 };
 

@@ -151,6 +151,7 @@ public:
 	virtual String get_resource_dir() const override;
 	virtual String get_locale() const override;
 	virtual String get_model_name() const override;
+	virtual String get_processor_name() const override;
 
 	virtual String get_unique_id() const override;
 
@@ -167,6 +168,7 @@ public:
 	virtual Error create_instance(const List<String> &p_arguments, ProcessID *r_child_id = nullptr) override;
 	virtual Error kill(const ProcessID &p_pid) override;
 	virtual String get_system_ca_certificates() override;
+	virtual Error get_entropy(uint8_t *r_buffer, int p_bytes) override;
 
 	virtual Error setup_remote_filesystem(const String &p_server_host, int p_port, const String &p_password, String &r_project_path) override;
 

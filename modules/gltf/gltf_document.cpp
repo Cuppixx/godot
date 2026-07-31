@@ -692,24 +692,40 @@ static Vector<uint8_t> _parse_base64_uri(const String &p_uri) {
 	return buf;
 }
 
+static inline bool _all_buffers_empty(const Vector<Vector<uint8_t>> &p_buffers, int start_idx = 0) {
+	for (int i = start_idx; i < p_buffers.size(); i++) {
+		if (!p_buffers[i].is_empty()) {
+			return false;
+		}
+	}
+	return true;
+}
+
 Error GLTFDocument::_encode_buffer_glb(Ref<GLTFState> p_state, const String &p_path) {
 	print_verbose("glTF: Total buffers: " + itos(p_state->buffers.size()));
 
-	if (p_state->buffers.is_empty()) {
+	if (p_state->buffers.is_empty() || _all_buffers_empty(p_state->buffers)) {
+		ERR_FAIL_COND_V_MSG(!p_state->buffer_views.is_empty(), ERR_INVALID_DATA, "glTF: Buffer views are present, but buffers are empty.");
 		return OK;
 	}
 	Array buffers;
-	if (!p_state->buffers.is_empty()) {
-		Vector<uint8_t> buffer_data = p_state->buffers[0];
-		Dictionary gltf_buffer;
+	Dictionary first_buffer;
 
-		gltf_buffer["byteLength"] = buffer_data.size();
-		buffers.push_back(gltf_buffer);
-	}
+	first_buffer["byteLength"] = p_state->buffers[0].size();
+	buffers.push_back(first_buffer);
 
 	for (GLTFBufferIndex i = 1; i < p_state->buffers.size(); i++) {
-		Vector<uint8_t> buffer_data = p_state->buffers[i];
+		const Vector<uint8_t> &buffer_data = p_state->buffers[i];
 		Dictionary gltf_buffer;
+		if (buffer_data.is_empty()) {
+			if (i < p_state->buffers.size() - 1 && !_all_buffers_empty(p_state->buffers, i + 1)) {
+				// Have to push back an empty buffer to avoid changing the buffer index, even though this is against spec.
+				WARN_PRINT("glTF: Buffer " + itos(i) + " is empty, but there are non-empty subsequent buffers.");
+				gltf_buffer["byteLength"] = 0;
+				buffers.push_back(gltf_buffer);
+			}
+			continue;
+		}
 		String filename = p_path.get_basename().get_file() + itos(i) + ".bin";
 		String path = p_path.get_base_dir() + "/" + filename;
 		Error err;
@@ -717,9 +733,7 @@ Error GLTFDocument::_encode_buffer_glb(Ref<GLTFState> p_state, const String &p_p
 		if (file.is_null()) {
 			return err;
 		}
-		if (buffer_data.is_empty()) {
-			return OK;
-		}
+		file->create(FileAccess::ACCESS_RESOURCES);
 		file->store_buffer(buffer_data.ptr(), buffer_data.size());
 		gltf_buffer["uri"] = filename;
 		gltf_buffer["byteLength"] = buffer_data.size();
@@ -733,14 +747,24 @@ Error GLTFDocument::_encode_buffer_glb(Ref<GLTFState> p_state, const String &p_p
 Error GLTFDocument::_encode_buffer_bins(Ref<GLTFState> p_state, const String &p_path) {
 	print_verbose("glTF: Total buffers: " + itos(p_state->buffers.size()));
 
-	if (p_state->buffers.is_empty()) {
+	if (p_state->buffers.is_empty() || _all_buffers_empty(p_state->buffers)) {
+		ERR_FAIL_COND_V_MSG(!p_state->buffer_views.is_empty(), ERR_INVALID_DATA, "glTF: Buffer views are present, but buffers are empty.");
 		return OK;
 	}
 	Array buffers;
 
 	for (GLTFBufferIndex i = 0; i < p_state->buffers.size(); i++) {
-		Vector<uint8_t> buffer_data = p_state->buffers[i];
+		const Vector<uint8_t> &buffer_data = p_state->buffers[i];
 		Dictionary gltf_buffer;
+		if (buffer_data.is_empty()) {
+			if (i < p_state->buffers.size() - 1 && !_all_buffers_empty(p_state->buffers, i + 1)) {
+				// Have to push back an empty buffer to avoid changing the buffer index, even though this is against spec.
+				WARN_PRINT("glTF: Buffer " + itos(i) + " is empty, but there are non-empty subsequent buffers.");
+				gltf_buffer["byteLength"] = 0;
+				buffers.push_back(gltf_buffer);
+			}
+			continue;
+		}
 		String filename = p_path.get_basename().get_file() + itos(i) + ".bin";
 		String path = p_path.get_base_dir() + "/" + filename;
 		Error err;
@@ -748,15 +772,14 @@ Error GLTFDocument::_encode_buffer_bins(Ref<GLTFState> p_state, const String &p_
 		if (file.is_null()) {
 			return err;
 		}
-		if (buffer_data.is_empty()) {
-			return OK;
-		}
 		file->store_buffer(buffer_data.ptr(), buffer_data.size());
 		gltf_buffer["uri"] = filename;
 		gltf_buffer["byteLength"] = buffer_data.size();
 		buffers.push_back(gltf_buffer);
 	}
-	p_state->json["buffers"] = buffers;
+	if (!buffers.is_empty()) {
+		p_state->json["buffers"] = buffers;
+	}
 
 	return OK;
 }
@@ -1139,17 +1162,6 @@ Error GLTFDocument::_serialize_meshes(Ref<GLTFState> p_state) {
 					attributes["COLOR_0"] = GLTFAccessor::encode_new_accessor_from_colors(p_state, a, GLTFBufferView::TARGET_ARRAY_BUFFER);
 				}
 			}
-			HashMap<int, int> joint_i_to_bone_i;
-			for (GLTFNodeIndex node_i = 0; node_i < p_state->nodes.size(); node_i++) {
-				GLTFSkinIndex skin_i = -1;
-				if (p_state->nodes[node_i]->mesh == gltf_mesh_i) {
-					skin_i = p_state->nodes[node_i]->skin;
-				}
-				if (skin_i != -1) {
-					joint_i_to_bone_i = p_state->skins[skin_i]->joint_i_to_bone_i;
-					break;
-				}
-			}
 			{
 				const Array &a = array[Mesh::ARRAY_BONES];
 				const Vector<Vector3> &vertex_array = array[Mesh::ARRAY_VERTEX];
@@ -1284,7 +1296,6 @@ Error GLTFDocument::_serialize_meshes(Ref<GLTFState> p_state) {
 					Dictionary t;
 					Vector<Vector3> varr = array_morph[Mesh::ARRAY_VERTEX];
 					Vector<Vector3> src_varr = array[Mesh::ARRAY_VERTEX];
-					Array mesh_arrays = import_mesh->get_surface_arrays(surface_i);
 					if (varr.size() && varr.size() == src_varr.size()) {
 						if (shape_mode == ArrayMesh::BlendShapeMode::BLEND_SHAPE_MODE_NORMALIZED) {
 							const int max_idx = src_varr.size();
@@ -1811,8 +1822,7 @@ Error GLTFDocument::_parse_meshes(Ref<GLTFState> p_state) {
 			}
 			mesh_surface_tool->index();
 			if (generate_tangents && a.has("TEXCOORD_0")) {
-				//must generate mikktspace tangents.. ergh..
-				mesh_surface_tool->generate_tangents();
+				mesh_surface_tool->generate_tangents(/*split*/ !mesh_prim.has("targets"));
 			}
 			array = mesh_surface_tool->commit_to_arrays();
 
@@ -1951,7 +1961,7 @@ Error GLTFDocument::_parse_meshes(Ref<GLTFState> p_state) {
 					}
 					blend_surface_tool->index();
 					if (generate_tangents) {
-						blend_surface_tool->generate_tangents();
+						blend_surface_tool->generate_tangents(/*split*/ false);
 					}
 					array_copy = blend_surface_tool->commit_to_arrays();
 
@@ -2090,13 +2100,14 @@ static inline Ref<Image> _duplicate_and_decompress_image(const Ref<Image> &p_ima
 
 Dictionary GLTFDocument::_serialize_image(Ref<GLTFState> p_state, Ref<Image> p_image, const String &p_image_format, float p_lossy_quality, Ref<GLTFDocumentExtension> p_image_save_extension) {
 	Dictionary image_dict;
+	// The name is guaranteed to be set to a non-empty value by all callers of this internal function.
+	const String image_name = p_image->get_name();
+	ERR_FAIL_COND_V_MSG(image_name.is_empty(), image_dict, "glTF: Image name is empty.");
+	image_dict["name"] = image_name;
+	// We can only export uncompressed images, so if the image is compressed, we need to decompress it first.
 	if (p_image->is_compressed()) {
 		p_image = _duplicate_and_decompress_image(p_image);
 		ERR_FAIL_COND_V_MSG(p_image->is_compressed(), image_dict, "glTF: Image was compressed, but could not be decompressed.");
-	}
-
-	if (!p_image->get_name().is_empty()) {
-		image_dict["name"] = p_image->get_name();
 	}
 
 	if (p_state->filename.to_lower().ends_with("gltf")) {
@@ -2108,7 +2119,7 @@ Dictionary GLTFDocument::_serialize_image(Ref<GLTFState> p_state, Ref<Image> p_i
 		if (!da->dir_exists(full_texture_dir)) {
 			da->make_dir(full_texture_dir);
 		}
-		String image_file_name = p_image->get_name();
+		String image_file_name = image_name;
 		if (p_image_save_extension.is_valid()) {
 			image_file_name = image_file_name + p_image_save_extension->get_image_file_extension();
 			Error err = p_image_save_extension->save_image_at_path(p_state, p_image, full_texture_dir.path_join(image_file_name), p_image_format, p_lossy_quality);
@@ -5108,6 +5119,7 @@ NodePath GLTFDocument::_find_material_node_path(Ref<GLTFState> p_state, const Re
 }
 
 Ref<GLTFObjectModelProperty> GLTFDocument::import_object_model_property(Ref<GLTFState> p_state, const String &p_json_pointer) {
+	ERR_FAIL_COND_V_MSG(p_state.is_null(), Ref<GLTFObjectModelProperty>(), "Cannot import object model property because GLTFState is null.");
 	if (p_state->object_model_properties.has(p_json_pointer)) {
 		return p_state->object_model_properties[p_json_pointer];
 	}
@@ -5328,7 +5340,7 @@ Ref<GLTFObjectModelProperty> GLTFDocument::import_object_model_property(Ref<GLTF
 	// It should check `split.size() > 4 and split[0] == "nodes" and split[2] == "extensions" and split[3] == "MY_ext"`
 	// at the start of the function to check if this JSON pointer applies to it, then it can handle `split[4]`.
 	if (!ret->has_node_paths()) {
-		for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+		for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 			ret = ext->import_object_model_property(p_state, split, partial_paths);
 			if (ret.is_valid() && ret->has_node_paths()) {
 				if (!ret->has_json_pointers()) {
@@ -5578,7 +5590,7 @@ Ref<GLTFObjectModelProperty> GLTFDocument::export_object_model_property(Ref<GLTF
 		ret->set_json_pointers(split_json_pointers);
 	} else {
 		// We don't have a mapping, so we need to ask GLTFDocumentExtension classes if they have a mapping.
-		for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+		for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 			ret = ext->export_object_model_property(p_state, p_node_path, p_godot_node, p_gltf_node_index, target_object, target_prop_depth);
 			if (ret.is_valid() && ret->has_json_pointers()) {
 				if (!ret->has_node_paths()) {
@@ -5955,7 +5967,6 @@ void GLTFDocument::_convert_mesh_instances(Ref<GLTFState> p_state) {
 		Ref<Skin> skin = mi->get_skin();
 		Ref<GLTFSkin> gltf_skin;
 		gltf_skin.instantiate();
-		Array json_joints;
 		if (p_state->skeleton3d_to_gltf_skeleton.has(godot_skeleton->get_instance_id())) {
 			// This is a skinned mesh. If the mesh has no ARRAY_WEIGHTS or ARRAY_BONES, it will be invisible.
 			const GLTFSkeletonIndex skeleton_gltf_i = p_state->skeleton3d_to_gltf_skeleton[godot_skeleton->get_instance_id()];
@@ -6563,7 +6574,7 @@ void GLTFDocument::_convert_animation(Ref<GLTFState> p_state, AnimationPlayer *p
 		// First, check if it's a Blend Shape track.
 		const Vector<StringName> subnames = track_path.get_subnames();
 		Animation::TrackType track_type = animation->track_get_type(track_index);
-		if (animation->track_get_type(track_index) == Animation::TYPE_BLEND_SHAPE || (subnames.size() == 1 && subnames[0].operator String().begins_with("blend_shapes/") && track_type == Animation::TYPE_VALUE)) {
+		if (animation->track_get_type(track_index) == Animation::TYPE_BLEND_SHAPE || (subnames.size() == 1 && subnames[0].string().begins_with("blend_shapes/") && track_type == Animation::TYPE_VALUE)) {
 			const MeshInstance3D *mesh_instance = Object::cast_to<MeshInstance3D>(animated_node);
 			ERR_CONTINUE_MSG(!mesh_instance, "glTF: Animation had a Blend Shape track, but the node wasn't a MeshInstance3D. Ignoring this track.");
 			Ref<Mesh> mesh = mesh_instance->get_mesh();
@@ -6720,7 +6731,7 @@ Error GLTFDocument::_parse(Ref<GLTFState> p_state, const String &p_path, Ref<Fil
 	ERR_FAIL_COND_V(err != OK, err);
 
 	document_extensions.clear();
-	for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+	for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 		ERR_CONTINUE(ext.is_null());
 		Ref<GLTFDocumentExtension> ext_dup = ext;
 		if (ClassDB::is_class_exposed(ext->get_class_name())) {
@@ -6951,8 +6962,10 @@ void GLTFDocument::_build_parent_hierarchy(Ref<GLTFState> p_state) {
 }
 
 Vector<Ref<GLTFDocumentExtension>> GLTFDocument::all_document_extensions;
+Mutex GLTFDocument::all_document_extensions_mutex;
 
 void GLTFDocument::register_gltf_document_extension(Ref<GLTFDocumentExtension> p_extension, bool p_first_priority) {
+	MutexLock lock(all_document_extensions_mutex);
 	if (!all_document_extensions.has(p_extension)) {
 		if (p_first_priority) {
 			all_document_extensions.insert(0, p_extension);
@@ -6963,14 +6976,17 @@ void GLTFDocument::register_gltf_document_extension(Ref<GLTFDocumentExtension> p
 }
 
 void GLTFDocument::unregister_gltf_document_extension(Ref<GLTFDocumentExtension> p_extension) {
+	MutexLock lock(all_document_extensions_mutex);
 	all_document_extensions.erase(p_extension);
 }
 
 void GLTFDocument::unregister_all_gltf_document_extensions() {
+	MutexLock lock(all_document_extensions_mutex);
 	all_document_extensions.clear();
 }
 
 Vector<Ref<GLTFDocumentExtension>> GLTFDocument::get_all_gltf_document_extensions() {
+	MutexLock lock(all_document_extensions_mutex);
 	return all_document_extensions;
 }
 
@@ -6996,7 +7012,7 @@ HashSet<String> GLTFDocument::get_supported_gltf_extensions_hashset() {
 	supported_extensions.insert("KHR_materials_unlit");
 	supported_extensions.insert("KHR_node_visibility");
 	supported_extensions.insert("KHR_texture_transform");
-	for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+	for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 		ERR_CONTINUE(ext.is_null());
 		Vector<String> ext_supported_extensions = ext->get_supported_extensions();
 		for (int i = 0; i < ext_supported_extensions.size(); ++i) {
@@ -7296,7 +7312,7 @@ Error GLTFDocument::append_from_scene(Node *p_node, Ref<GLTFState> p_state, uint
 	// Perform export preflight for document extensions. Only extensions that
 	// return OK will be used for the rest of the export steps.
 	document_extensions.clear();
-	for (Ref<GLTFDocumentExtension> ext : all_document_extensions) {
+	for (Ref<GLTFDocumentExtension> ext : get_all_gltf_document_extensions()) {
 		ERR_CONTINUE(ext.is_null());
 		Ref<GLTFDocumentExtension> ext_dup = ext;
 		if (ClassDB::is_class_exposed(ext->get_class_name())) {

@@ -67,7 +67,7 @@
 #include "scene/gui/view_panner.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
-#include "servers/audio/audio_stream.h"
+#include "scene/resources/audio/audio_stream.h"
 
 constexpr double FPS_DECIMAL = 1.0;
 constexpr double SECOND_DECIMAL = 0.0001;
@@ -868,8 +868,6 @@ bool AnimationMultiTrackKeyEdit::_set(const StringName &p_name, const Variant &p
 							mergeable = true;
 						}
 					}
-
-					Variant prev = animation->track_get_key_value(track, key);
 
 					if (!setting) {
 						if (mergeable) {
@@ -3984,16 +3982,6 @@ void AnimationTrackEditGroup::gui_input(const Ref<InputEvent> &p_event) {
 			bool current_group_folded = !editor->get_current_animation()->editor_is_group_folded(node_name);
 			editor->get_current_animation()->editor_set_group_folded(node_name, current_group_folded);
 
-			if (!editor->get_current_animation()->get_path().is_resource_file()) {
-				EditorNode::get_editor_folding().save_scene_folding(
-						EditorNode::get_singleton()->get_edited_scene(),
-						EditorNode::get_singleton()->get_edited_scene()->get_scene_file_path());
-			} else {
-				EditorNode::get_editor_folding().save_resource_folding(
-						editor->get_current_animation(),
-						editor->get_current_animation()->get_path());
-			}
-
 			for (AnimationTrackEdit *i : track_edits) {
 				i->set_visible(!current_group_folded);
 			}
@@ -4140,12 +4128,6 @@ void AnimationTrackEditor::set_animation(const Ref<Animation> &p_anim, bool p_re
 					break;
 				}
 			}
-		}
-
-		if (animation->get_path().is_resource_file()) {
-			EditorNode::get_editor_folding().load_resource_folding(
-					animation,
-					animation->get_path());
 		}
 	} else {
 		hscroll->hide();
@@ -4552,7 +4534,7 @@ void AnimationTrackEditor::_insert_track(bool p_reset_wanted, bool p_create_bezi
 	}
 }
 
-void AnimationTrackEditor::insert_transform_key(Node3D *p_node, const String &p_sub, const Animation::TrackType p_type, const Variant &p_value) {
+void AnimationTrackEditor::insert_transform_3d_key(Node3D *p_node, const String &p_sub, const Animation::TrackType p_type, const Variant &p_value) {
 	if (read_only) {
 		popup_read_only_dialog();
 		return;
@@ -4600,7 +4582,7 @@ void AnimationTrackEditor::insert_transform_key(Node3D *p_node, const String &p_
 	_query_insert(id);
 }
 
-bool AnimationTrackEditor::has_track(Node3D *p_node, const String &p_sub, const Animation::TrackType p_type) {
+bool AnimationTrackEditor::has_transform_3d_track(Node3D *p_node, const String &p_sub, const Animation::TrackType p_type) {
 	ERR_FAIL_NULL_V(root, false);
 	if (!keying) {
 		return false;
@@ -6728,7 +6710,6 @@ void AnimationTrackEditor::_anim_duplicate_keys(float p_ofs, bool p_ofs_valid, i
 		undo_redo->add_undo_method(this, "_clear_selection_for_anim", animation);
 
 		// Reselect duplicated.
-		RBMap<SelectedKey, KeyInfo> new_selection;
 		for (const Pair<int, float> &E : new_selection_values) {
 			undo_redo->add_do_method(this, "_select_at_anim", animation, E.first, E.second);
 		}
@@ -8032,7 +8013,7 @@ void AnimationTrackEditor::_show_imported_anim_warning() {
 
 void AnimationTrackEditor::_show_dummy_player_warning() {
 	EditorNode::get_singleton()->show_warning(
-			TTR("Some AnimationPlayerEditor's options are disabled since this is the dummy AnimationPlayer for preview.\n\nThe dummy player is forced active, non-deterministic and doesn't have the root motion track. Furthermore, the original node is inactive temporary."));
+			TTR("Some AnimationPlayerEditor options are disabled since this is the dummy AnimationPlayer for preview.\n\nThe dummy player is forced active, non-deterministic, and doesn't have the root motion track. Furthermore, the original node is temporarily inactive."));
 }
 
 void AnimationTrackEditor::_show_inactive_player_warning() {
@@ -8717,12 +8698,8 @@ AnimationTrackEditor::AnimationTrackEditor() {
 }
 
 AnimationTrackEditor::~AnimationTrackEditor() {
-	if (key_edit) {
-		memdelete(key_edit);
-	}
-	if (multi_key_edit) {
-		memdelete(multi_key_edit);
-	}
+	memdelete(key_edit);
+	memdelete(multi_key_edit);
 }
 
 // AnimationTrackKeyEditEditorPlugin.
